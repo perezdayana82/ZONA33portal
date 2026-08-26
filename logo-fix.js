@@ -1,0 +1,1 @@
+(()=>{const logo='/assets/zona33-logo-correct.svg';const fix=()=>document.querySelectorAll('.brand img').forEach(img=>{img.src=logo;img.alt='ZONA 33';img.removeAttribute('onerror')});new MutationObserver(fix).observe(document.body,{childList:true,subtree:true});fix()})();
