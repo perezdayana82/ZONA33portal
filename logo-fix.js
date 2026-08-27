@@ -8,7 +8,8 @@ const loadSequential=async()=>{
     ['/enhancements6.js?v=20260827-cal6','data-z33-calendar'],
     ['/enhancements9.js?v=20260827-admin10','data-z33-admin'],
     ['/enhancements10.js?v=20260827-ig-url2','data-z33-ig-url'],
-    ['/enhancements12.js?v=20260827-people13','data-z33-people']
+    ['/enhancements12.js?v=20260827-people13','data-z33-people'],
+    ['/enhancements13.js?v=20260827-coaches14','data-z33-coaches']
   ];
   for(const [src,attr] of files){
     if(document.querySelector(`script[${attr}]`))continue;
