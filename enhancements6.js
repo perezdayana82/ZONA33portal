@@ -1,3 +1,136 @@
-(()=>{'use strict';const U='https://ponhllwbvhtczaphfdgw.supabase.co',K='sb_publishable_okgoHkX2YZFtQ9P72ckztQ_jiCuWN-6',api=supabase.createClient(U,K,{auth:{persistSession:true,autoRefreshToken:true}});const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));const money=v=>'$'+Number(v||0).toLocaleString('es-MX');let month=new Date(new Date().getFullYear(),new Date().getMonth(),1),selected=new Date().toISOString().slice(0,10),cache=[];const mk=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`,ml=d=>new Intl.DateTimeFormat('es-MX',{month:'long',year:'numeric'}).format(d),dl=s=>new Intl.DateTimeFormat('es-MX',{weekday:'long',day:'numeric',month:'long'}).format(new Date(s+'T12:00:00'));async function load(){const a=mk(month),z=new Date(month.getFullYear(),month.getMonth()+1,0).toISOString().slice(0,10),r=await api.from('classes').select('*,coaches(name)').gte('class_date',a+'-01').lte('class_date',z).order('class_date').order('start_time');if(r.error)throw r.error;cache=r.data||[];return cache}function cells(){const f=new Date(month.getFullYear(),month.getMonth(),1),n=(f.getDay()+6)%7,l=new Date(month.getFullYear(),month.getMonth()+1,0).getDate(),a=Array(n).fill(null);for(let i=1;i<=l;i++)a.push(new Date(month.getFullYear(),month.getMonth(),i));while(a.length%7)a.push(null);return a}async function calendar(){const c=document.querySelector('#content');if(!c)return;try{const rows=await load(),by={};rows.forEach(x=>(by[x.class_date]??=[]).push(x));if(selected.slice(0,7)!==mk(month))selected=mk(month)+'-01';c.innerHTML=`<div class='hero'><div class='ey'>Agenda mensual</div><h2>Horarios de <span>${esc(ml(month))}.</span></h2><p class='muted'>Los horarios de este calendario son los que se muestran públicamente en el landing.</p></div><div class='calendar-shell'><div class='calendar-toolbar'><button class='btn out' onclick='window.z33CalToday()'>Hoy</button><div class='calendar-nav'><button class='btn out' onclick='window.z33CalPrev()'>←</button><strong>${esc(ml(month))}</strong><button class='btn out' onclick='window.z33CalNext()'>→</button></div><button class='btn red' onclick='window.z33CalNew()'>+ Nueva clase</button></div><div class='calendar-week'>${['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(x=>`<div>${x}</div>`).join('')}</div><div class='calendar-grid'>${cells().map(d=>!d?`<div class='calendar-day blank'></div>`:(()=>{const k=d.toISOString().slice(0,10),its=by[k]||[];return `<button class='calendar-day ${k===selected?'selected':''} ${k===new Date().toISOString().slice(0,10)?'today':''}' onclick="window.z33CalSelect('${k}')"><span class='num'>${d.getDate()}</span><span class='count'>${its.length?its.length+' clases':''}</span><span class='dots'>${its.slice(0,4).map(x=>`<i class='${x.status==='scheduled'?'live':'off'}'></i>`).join('')}</span></button>`})()).join('')}</div></div><br><div class='card'><div class='ey'>${esc(dl(selected))}</div><div class='list'>${(by[selected]||[]).map(x=>`<div class='item'><div><b>${esc(x.start_time.slice(0,5))} · ${esc(x.class_type)}</b><small>${esc(x.coaches?.name||'Sin coach')} · ${x.capacity} spots · ${esc(x.status)}</small></div><div class='actions'><button class='btn out' onclick='window.z33CalEdit(${JSON.stringify(x)})'>Editar</button>${x.status==='scheduled'?`<button class='btn danger' onclick="window.z33CalCancel('${x.id}')">Cancelar</button>`:''}</div></div>`).join('')||`<div class='empty'>No hay clases este día.</div>`}</div></div>`}catch(e){c.innerHTML=`<div class='empty'>No se pudo cargar el calendario: ${esc(e.message)}</div>`}}window.z33CalSelect=d=>{selected=d;calendar()};window.z33CalPrev=()=>{month=new Date(month.getFullYear(),month.getMonth()-1,1);selected=mk(month)+'-01';calendar()};window.z33CalNext=()=>{month=new Date(month.getFullYear(),month.getMonth()+1,1);selected=mk(month)+'-01';calendar()};window.z33CalToday=()=>{month=new Date(new Date().getFullYear(),new Date().getMonth(),1);selected=new Date().toISOString().slice(0,10);calendar()};async function form(x){const co=await api.from('coaches').select('*').eq('is_active',true).order('name');const st=x?.start_time?.slice(0,5)||'05:30',en=x?.end_time?.slice(0,5)||`${String((Number(st.slice(0,2))+1)%24).padStart(2,'0')}:${st.slice(3)}`;modal(x?'Editar clase':'Nueva clase',`<div class='form'><div class='row'><div class='field'><label>Fecha</label><input id='cfDate' type='date' value='${x?.class_date||selected}'></div><div class='field'><label>Tipo</label><input id='cfType' value='${esc(x?.class_type||'Functional')}'></div></div><div class='row'><div class='field'><label>Inicio</label><input id='cfStart' type='time' value='${st}'></div><div class='field'><label>Fin</label><input id='cfEnd' type='time' value='${en}'></div></div><div class='row'><div class='field'><label>Coach</label><select id='cfCoach'><option value=''>Sin coach</option>${(co.data||[]).map(q=>`<option value='${q.id}' ${x?.coach_id===q.id?'selected':''}>${esc(q.name)}</option>`).join('')}</select></div><div class='field'><label>Cupo</label><input id='cfCap' type='number' min='1' value='${x?.capacity??10}'></div></div><div class='actions'><button class='btn red' onclick="window.z33CalSave('${x?.id||''}')">Guardar</button></div></div>`)}window.z33CalNew=()=>form();window.z33CalEdit=x=>form(x);window.z33CalSave=async id=>{const p={class_date:val('cfDate'),start_time:val('cfStart'),end_time:val('cfEnd'),class_type:val('cfType')||'Functional',coach_id:document.querySelector('#cfCoach').value||null,capacity:Number(document.querySelector('#cfCap').value||10),min_attendees:1,is_master_class:false,status:'scheduled',updated_at:new Date().toISOString()};const r=id?await api.from('classes').update(p).eq('id',id):await api.from('classes').insert(p);if(r.error)return toast('No se pudo guardar: '+r.error.message);closeModal();toast('Clase guardada.');calendar()};window.z33CalCancel=async id=>{if(!confirm('¿Cancelar esta clase?'))return;const r=await api.from('classes').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',id);if(r.error)return toast('No se pudo cancelar: '+r.error.message);toast('Clase cancelada.');calendar()};
-function val(id){return document.querySelector('#'+id)?.value?.trim()||''}async function plans(){const c=document.querySelector('#content');if(!c)return;const r=await api.from('membership_plans').select('*').order('sort_order').order('name');if(r.error){c.innerHTML=`<div class='empty'>No se pudieron cargar los planes: ${esc(r.error.message)}</div>`;return}c.innerHTML=`<div class='hero'><div class='ey'>Planes</div><h2>Oferta <span>comercial.</span></h2><p class='muted'>Los planes activos aparecen en la landing. “Eliminar” los oculta sin borrar históricos.</p></div><div class='actions'><button class='btn red' onclick="window.z33PlanNew()">+ Nuevo plan</button></div><br><div class='grid grid3'>${(r.data||[]).map(p=>`<div class='card'><div class='ey'>${p.is_active?'PUBLICADO':'OCULTO'}</div><h2>${esc(p.name)}</h2><div class='stat'><b>${money(p.price)}</b></div><p class='muted'>${esc(p.description||'')} · ${p.duration_days||1} días</p><div class='actions'><button class='btn out' onclick='window.z33PlanEdit(${JSON.stringify(p)})'>Editar</button>${p.is_active?`<button class='btn danger' onclick="window.z33PlanDelete('${p.id}')">Eliminar</button>`:`<button class='btn out' onclick="window.z33PlanRestore('${p.id}')">Restaurar</button>`}</div></div>`).join('')||`<div class='empty'>No hay planes.</div>`}</div>`}function pform(p){return `<div class='form'><div class='field'><label>Nombre</label><input id='pn' value='${esc(p?.name||'')}'></div><div class='field'><label>Precio</label><input id='pp' type='number' min='0' step='0.01' value='${p?.price??''}'></div><div class='field'><label>Duración (días)</label><input id='pd' type='number' min='1' value='${p?.duration_days??30}'></div><div class='field'><label>Descripción</label><textarea id='px'>${esc(p?.description||'')}</textarea></div><div class='field'><label>Etiqueta</label><input id='pl' value='${esc(p?.promo_label||'')}'></div><div class='field'><label>Orden</label><input id='po' type='number' value='${p?.sort_order??10}'></div><button class='btn red' onclick="window.z33PlanSave('${p?.id||''}')">Guardar</button></div>`}window.z33PlanNew=()=>modal('Nuevo plan',pform());window.z33PlanEdit=p=>modal('Editar plan',pform(p));window.z33PlanSave=async id=>{const p={name:val('pn'),price:Number(val('pp')||0),duration_days:Number(val('pd')||30),description:val('px')||null,promo_label:val('pl')||null,sort_order:Number(val('po')||10),is_active:true,updated_at:new Date().toISOString()};const r=id?await api.from('membership_plans').update(p).eq('id',id):await api.from('membership_plans').insert(p);if(r.error)return toast('No se pudo guardar: '+r.error.message);closeModal();toast('Plan guardado.');plans()};window.z33PlanDelete=async id=>{if(!confirm('¿Eliminar este plan de la oferta pública? Se conservará para históricos.'))return;const r=await api.from('membership_plans').update({is_active:false,updated_at:new Date().toISOString()}).eq('id',id);if(r.error)return toast('No se pudo eliminar: '+r.error.message);toast('Plan eliminado.');plans()};window.z33PlanRestore=async id=>{const r=await api.from('membership_plans').update({is_active:true,updated_at:new Date().toISOString()}).eq('id',id);if(r.error)return toast('No se pudo restaurar: '+r.error.message);toast('Plan restaurado.');plans()};
-let wc=false,wp=false;function wrap(){if(!wc&&typeof window.adminClasses==='function'){window.adminClasses=calendar;wc=true}if(!wp&&typeof window.adminPlans==='function'){window.adminPlans=plans;wp=true}if(wc&&wp)return true;return false}function boot(){let i=0;const t=setInterval(()=>{if(wrap()||i++>40)clearInterval(t)},250)}boot();const s=document.createElement('style');s.textContent='.calendar-shell{background:#0b0b0b;border:1px solid #252525;border-radius:14px;padding:16px}.calendar-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}.calendar-nav{display:flex;align-items:center;gap:12px;font:900 24px/1 Barlow Condensed,Arial;text-transform:uppercase}.calendar-week,.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.calendar-week div{padding:8px;text-align:center;color:#777;font-size:10px;font-weight:900;text-transform:uppercase}.calendar-day{min-height:82px;border:1px solid #252525;background:#101010;color:#fff;border-radius:9px;padding:8px;text-align:left;display:flex;flex-direction:column;gap:6px}.calendar-day:hover,.calendar-day.selected{border-color:#E0433A;background:#171111}.calendar-day.blank{background:#080808}.calendar-day .num{font:900 22px/1 Barlow Condensed}.calendar-day .count{font-size:9px;color:#9aa1aa}.dots{display:flex;gap:4px}.dots i{width:6px;height:6px;border-radius:50%;background:#5ee5a1}.dots i.off{background:#ff8b91}.calendar-day.today .num{color:#E0433A}@media(max-width:700px){.calendar-nav{order:3;width:100%;justify-content:center}.calendar-day{min-height:64px;padding:6px}.calendar-day .num{font-size:18px}.calendar-day .count{font-size:8px}}';document.head.appendChild(s)})();
+(()=>{
+'use strict';
+const U='https://ponhllwbvhtczaphfdgw.supabase.co',K='sb_publishable_okgoHkX2YZFtQ9P72ckztQ_jiCuWN-6';
+const api=supabase.createClient(U,K,{auth:{persistSession:true,autoRefreshToken:true}});
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+const money=v=>'$'+Number(v||0).toLocaleString('es-MX');
+const val=id=>document.querySelector('#'+id)?.value?.trim()||'';
+let month=new Date(new Date().getFullYear(),new Date().getMonth(),1);
+let selected=new Date().toISOString().slice(0,10);
+let cache=[];
+const mk=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+const ml=d=>new Intl.DateTimeFormat('es-MX',{month:'long',year:'numeric'}).format(d);
+const dl=s=>new Intl.DateTimeFormat('es-MX',{weekday:'long',day:'numeric',month:'long'}).format(new Date(s+'T12:00:00'));
+
+async function load(){
+  const start=`${mk(month)}-01`;
+  const end=new Date(month.getFullYear(),month.getMonth()+1,0).toISOString().slice(0,10);
+  // Do not embed coaches(name): this Supabase schema has multiple possible
+  // relationships between classes and coaches. Load the rows directly and
+  // resolve coach names from the coach_id ourselves.
+  const [classesRes,coachesRes]=await Promise.all([
+    api.from('classes').select('*').gte('class_date',start).lte('class_date',end).order('class_date').order('start_time'),
+    api.from('coaches').select('*').eq('is_active',true).order('name')
+  ]);
+  if(classesRes.error) throw classesRes.error;
+  if(coachesRes.error) throw coachesRes.error;
+  const byId=Object.fromEntries((coachesRes.data||[]).map(c=>[c.id,c]));
+  cache=(classesRes.data||[]).map(x=>({...x,coaches:byId[x.coach_id]||null}));
+  return cache;
+}
+
+function cells(){
+  const first=new Date(month.getFullYear(),month.getMonth(),1);
+  const offset=(first.getDay()+6)%7;
+  const days=new Date(month.getFullYear(),month.getMonth()+1,0).getDate();
+  const out=Array(offset).fill(null);
+  for(let d=1;d<=days;d++) out.push(new Date(month.getFullYear(),month.getMonth(),d));
+  while(out.length%7) out.push(null);
+  return out;
+}
+
+async function calendar(){
+  const c=document.querySelector('#content');
+  if(!c)return;
+  try{
+    const rows=await load();
+    const by={};
+    rows.forEach(x=>(by[x.class_date]??=[]).push(x));
+    if(selected.slice(0,7)!==mk(month)) selected=`${mk(month)}-01`;
+    c.innerHTML=`
+      <div class='hero'>
+        <div class='ey'>Agenda mensual</div>
+        <h2>Horarios de <span>${esc(ml(month))}.</span></h2>
+        <p class='muted'>Este calendario usa exactamente las clases guardadas en Supabase, que son las mismas que publica el landing.</p>
+      </div>
+      <div class='calendar-shell'>
+        <div class='calendar-toolbar'>
+          <button class='btn out' onclick='window.z33CalToday()'>Hoy</button>
+          <div class='calendar-nav'>
+            <button class='btn out' onclick='window.z33CalPrev()'>←</button>
+            <strong>${esc(ml(month))}</strong>
+            <button class='btn out' onclick='window.z33CalNext()'>→</button>
+          </div>
+          <button class='btn red' onclick='window.z33CalNew()'>+ Nueva clase</button>
+        </div>
+        <div class='calendar-week'>${['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(x=>`<div>${x}</div>`).join('')}</div>
+        <div class='calendar-grid'>${cells().map(d=>!d?`<div class='calendar-day blank'></div>`:(()=>{const k=d.toISOString().slice(0,10),its=by[k]||[];return `<button class='calendar-day ${k===selected?'selected':''} ${k===new Date().toISOString().slice(0,10)?'today':''}' onclick="window.z33CalSelect('${k}')"><span class='num'>${d.getDate()}</span><span class='count'>${its.length?its.length+' clases':''}</span><span class='dots'>${its.slice(0,4).map(x=>`<i class='${x.status==='scheduled'?'live':'off'}'></i>`).join('')}</span></button>`})()).join('')}</div>
+      </div>
+      <br>
+      <div class='card'>
+        <div class='ey'>${esc(dl(selected))}</div>
+        <div class='list'>${(by[selected]||[]).map(x=>`<div class='item'><div><b>${esc(String(x.start_time||'').slice(0,5))} · ${esc(x.class_type)}</b><small>${esc(x.coaches?.name||'Sin coach')} · ${x.capacity} spots · ${esc(x.status)}</small></div><div class='actions'><button class='btn out' onclick='window.z33CalEdit(${JSON.stringify(x)})'>Editar</button>${x.status==='scheduled'?`<button class='btn danger' onclick="window.z33CalCancel('${x.id}')">Cancelar</button>`:''}</div></div>`).join('')||`<div class='empty'>No hay clases este día.</div>`}</div>
+      </div>`;
+  }catch(e){
+    c.innerHTML=`<div class='empty'>No se pudo cargar el calendario: ${esc(e.message)}</div>`;
+  }
+}
+
+window.z33CalSelect=d=>{selected=d;calendar()};
+window.z33CalPrev=()=>{month=new Date(month.getFullYear(),month.getMonth()-1,1);selected=`${mk(month)}-01`;calendar()};
+window.z33CalNext=()=>{month=new Date(month.getFullYear(),month.getMonth()+1,1);selected=`${mk(month)}-01`;calendar()};
+window.z33CalToday=()=>{month=new Date(new Date().getFullYear(),new Date().getMonth(),1);selected=new Date().toISOString().slice(0,10);calendar()};
+
+async function form(x){
+  const {data:co,error}=await api.from('coaches').select('*').eq('is_active',true).order('name');
+  if(error)return toast('No se pudieron cargar los coaches: '+error.message);
+  const st=x?.start_time?.slice(0,5)||'05:30';
+  const en=x?.end_time?.slice(0,5)||`${String((Number(st.slice(0,2))+1)%24).padStart(2,'0')}:${st.slice(3)}`;
+  modal(x?'Editar clase':'Nueva clase',`<div class='form'>
+    <div class='row'><div class='field'><label>Fecha</label><input id='cfDate' type='date' value='${x?.class_date||selected}'></div><div class='field'><label>Tipo</label><input id='cfType' value='${esc(x?.class_type||'Functional')}'></div></div>
+    <div class='row'><div class='field'><label>Inicio</label><input id='cfStart' type='time' value='${st}'></div><div class='field'><label>Fin</label><input id='cfEnd' type='time' value='${en}'></div></div>
+    <div class='row'><div class='field'><label>Coach</label><select id='cfCoach'><option value=''>Sin coach</option>${(co.data||[]).map(q=>`<option value='${q.id}' ${x?.coach_id===q.id?'selected':''}>${esc(q.name)}</option>`).join('')}</select></div><div class='field'><label>Cupo</label><input id='cfCap' type='number' min='1' value='${x?.capacity??10}'></div></div>
+    <div class='actions'><button class='btn red' onclick="window.z33CalSave('${x?.id||''}')">Guardar</button></div>
+  </div>`);
+}
+window.z33CalNew=()=>form();
+window.z33CalEdit=x=>form(x);
+window.z33CalSave=async id=>{
+  const p={class_date:val('cfDate'),start_time:val('cfStart'),end_time:val('cfEnd'),class_type:val('cfType')||'Functional',coach_id:document.querySelector('#cfCoach').value||null,capacity:Number(document.querySelector('#cfCap').value||10),min_attendees:1,is_master_class:false,status:'scheduled',updated_at:new Date().toISOString()};
+  const r=id?await api.from('classes').update(p).eq('id',id):await api.from('classes').insert(p);
+  if(r.error)return toast('No se pudo guardar: '+r.error.message);
+  closeModal();toast('Clase guardada.');calendar();
+};
+window.z33CalCancel=async id=>{
+  if(!confirm('¿Cancelar esta clase?'))return;
+  const r=await api.from('classes').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',id);
+  if(r.error)return toast('No se pudo cancelar: '+r.error.message);
+  toast('Clase cancelada.');calendar();
+};
+
+async function plans(){
+  const c=document.querySelector('#content');
+  if(!c)return;
+  const r=await api.from('membership_plans').select('*').order('sort_order').order('name');
+  if(r.error){c.innerHTML=`<div class='empty'>No se pudieron cargar los planes: ${esc(r.error.message)}</div>`;return}
+  c.innerHTML=`<div class='hero'><div class='ey'>Planes</div><h2>Oferta <span>comercial.</span></h2><p class='muted'>Los planes activos aparecen en la landing. “Eliminar” los oculta sin borrar históricos.</p></div><div class='actions'><button class='btn red' onclick="window.z33PlanNew()">+ Nuevo plan</button></div><br><div class='grid grid3'>${(r.data||[]).map(p=>`<div class='card'><div class='ey'>${p.is_active?'PUBLICADO':'OCULTO'}</div><h2>${esc(p.name)}</h2><div class='stat'><b>${money(p.price)}</b></div><p class='muted'>${esc(p.description||'')} · ${p.duration_days||1} días</p><div class='actions'><button class='btn out' onclick='window.z33PlanEdit(${JSON.stringify(p)})'>Editar</button>${p.is_active?`<button class='btn danger' onclick="window.z33PlanDelete('${p.id}')">Eliminar</button>`:`<button class='btn out' onclick="window.z33PlanRestore('${p.id}')">Restaurar</button>`}</div></div>`).join('')||`<div class='empty'>No hay planes.</div>`}</div>`;
+}
+function pform(p){return `<div class='form'><div class='field'><label>Nombre</label><input id='pn' value='${esc(p?.name||'')}'></div><div class='field'><label>Precio</label><input id='pp' type='number' min='0' step='0.01' value='${p?.price??''}'></div><div class='field'><label>Duración (días)</label><input id='pd' type='number' min='1' value='${p?.duration_days??30}'></div><div class='field'><label>Descripción</label><textarea id='px'>${esc(p?.description||'')}</textarea></div><div class='field'><label>Etiqueta</label><input id='pl' value='${esc(p?.promo_label||'')}'></div><div class='field'><label>Orden</label><input id='po' type='number' value='${p?.sort_order??10}'></div><button class='btn red' onclick="window.z33PlanSave('${p?.id||''}')">Guardar</button></div>`}
+window.z33PlanNew=()=>modal('Nuevo plan',pform());
+window.z33PlanEdit=p=>modal('Editar plan',pform(p));
+window.z33PlanSave=async id=>{const p={name:val('pn'),price:Number(val('pp')||0),duration_days:Number(val('pd')||30),description:val('px')||null,promo_label:val('pl')||null,sort_order:Number(val('po')||10),is_active:true,updated_at:new Date().toISOString()};const r=id?await api.from('membership_plans').update(p).eq('id',id):await api.from('membership_plans').insert(p);if(r.error)return toast('No se pudo guardar: '+r.error.message);closeModal();toast('Plan guardado.');plans()};
+window.z33PlanDelete=async id=>{if(!confirm('¿Eliminar este plan de la oferta pública? Se conservará para históricos.'))return;const r=await api.from('membership_plans').update({is_active:false,updated_at:new Date().toISOString()}).eq('id',id);if(r.error)return toast('No se pudo eliminar: '+r.error.message);toast('Plan eliminado.');plans()};
+window.z33PlanRestore=async id=>{const r=await api.from('membership_plans').update({is_active:true,updated_at:new Date().toISOString()}).eq('id',id);if(r.error)return toast('No se pudo restaurar: '+r.error.message);toast('Plan restaurado.');plans()};
+
+let wc=false,wp=false;
+function wrap(){
+  if(!wc&&typeof window.adminClasses==='function'){window.adminClasses=calendar;wc=true}
+  if(!wp&&typeof window.adminPlans==='function'){window.adminPlans=plans;wp=true}
+  return wc&&wp;
+}
+function boot(){let i=0;const t=setInterval(()=>{if(wrap()||i++>40)clearInterval(t)},250)}
+boot();
+const s=document.createElement('style');
+s.textContent='.calendar-shell{background:#0b0b0b;border:1px solid #252525;border-radius:14px;padding:16px}.calendar-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}.calendar-nav{display:flex;align-items:center;gap:12px;font:900 24px/1 Barlow Condensed,Arial;text-transform:uppercase}.calendar-week,.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.calendar-week div{padding:8px;text-align:center;color:#777;font-size:10px;font-weight:900;text-transform:uppercase}.calendar-day{min-height:82px;border:1px solid #252525;background:#101010;color:#fff;border-radius:9px;padding:8px;text-align:left;display:flex;flex-direction:column;gap:6px}.calendar-day:hover,.calendar-day.selected{border-color:#E0433A;background:#171111}.calendar-day.blank{background:#080808}.calendar-day .num{font:900 22px/1 Barlow Condensed}.calendar-day .count{font-size:9px;color:#9aa1aa}.dots{display:flex;gap:4px}.dots i{width:6px;height:6px;border-radius:50%;background:#5ee5a1}.dots i.off{background:#ff8b91}.calendar-day.today .num{color:#E0433A}@media(max-width:700px){.calendar-nav{order:3;width:100%;justify-content:center}.calendar-day{min-height:64px;padding:6px}.calendar-day .num{font-size:18px}.calendar-day .count{font-size:8px}}';
+document.head.appendChild(s);
+})();
