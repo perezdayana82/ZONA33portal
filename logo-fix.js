@@ -4,11 +4,11 @@ const logo='/assets/zona33-logo-correct.svg';
 const LANDING='https://zona33.pages.dev/';
 const loadSequential=async()=>{
   const files=[
-    ['/enhancements5.js?v=20260827-cms4','data-z33-cms'],
-    ['/enhancements6.js?v=20260827-cal5','data-z33-calendar'],
-    ['/enhancements9.js?v=20260827-admin9','data-z33-admin'],
-    ['/enhancements10.js?v=20260827-ig-url1','data-z33-ig-url'],
-    ['/enhancements11.js?v=20260827-people12','data-z33-people']
+    ['/enhancements5.js?v=20260827-cms5','data-z33-cms'],
+    ['/enhancements6.js?v=20260827-cal6','data-z33-calendar'],
+    ['/enhancements9.js?v=20260827-admin10','data-z33-admin'],
+    ['/enhancements10.js?v=20260827-ig-url2','data-z33-ig-url'],
+    ['/enhancements12.js?v=20260827-people13','data-z33-people']
   ];
   for(const [src,attr] of files){
     if(document.querySelector(`script[${attr}]`))continue;
