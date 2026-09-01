@@ -88,4 +88,10 @@
   setTimeout(ensureAdminNav,1500);
   const observer=new MutationObserver(ensureAdminNav);
   observer.observe(document.body,{childList:true,subtree:true});
+
+  const excelScript=document.createElement('script');
+  excelScript.src='./excel-fix.js?v=20260901-1';
+  excelScript.onload=()=>console.log('ZONA33 Excel export loaded');
+  excelScript.onerror=()=>console.error('No se pudo cargar excel-fix.js');
+  document.head.appendChild(excelScript);
 })();
