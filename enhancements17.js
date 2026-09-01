@@ -6,7 +6,6 @@
   const dayNum=d=>d.toLocaleDateString('es-MX',{day:'numeric'});
   const time=v=>String(v||'').slice(0,5);
 
-  // Admin navigation: add a dedicated reservations section.
   const baseNav=window.nav;
   window.nav=function(){
     const items=baseNav?baseNav():[];
@@ -16,9 +15,8 @@
     }
     return items;
   };
-  if(window.labels) labels.adminReservations='Reservas';
+  try{labels.adminReservations='Reservas'}catch(e){}
 
-  // Keep an already-rendered admin sidebar in sync when this enhancement loads after boot().
   function ensureAdminNav(){
     if(role!=='admin')return;
     const navEl=document.querySelector('#nav');
@@ -32,10 +30,10 @@
   }
   setTimeout(ensureAdminNav,0);
 
-  // Admin: permanently remove a client account and its related data.
   window.deleteClient=async function(profileId,name){
     if(!profileId)return toast('Cliente no encontrado.');
-    const ok=confirm(`¿Eliminar definitivamente a ${name||'este cliente'}?\n\nSe eliminarán su cuenta, membresías, pagos y reservas. Esta acción no se puede deshacer.`);
+    const clientName=name||state.clients.find(x=>x.id===profileId)?.full_name||'este cliente';
+    const ok=confirm(`¿Eliminar definitivamente a ${clientName}?\n\nSe eliminarán su cuenta, membresías, pagos y reservas. Esta acción no se puede deshacer.`);
     if(!ok)return;
     const {error}=await sb.rpc('admin_delete_client',{p_profile_id:profileId});
     if(error)return toast(error.message||'No se pudo eliminar el cliente.');
@@ -44,7 +42,6 @@
     go('clients');
   };
 
-  // Admin: clients list with a clear delete action.
   window.adminClients=async function(c){
     c.innerHTML='<div class="card"><div class="ey">Admin</div><h2>Cargando clientes...</h2></div>';
     const d=typeof adminPaymentData==='function'?await adminPaymentData():null;
@@ -56,13 +53,12 @@
     c.innerHTML=`<div class="hero"><div class="ey">Admin</div><h2>Clientes <span>${d.clients.length}</span></h2><p class="muted">Gestiona membresías, pagos y cuentas de clientes.</p><button class="btn red" onclick="adminPaymentForm()">REGISTRAR PAGO</button></div><div class="card"><input id="q" placeholder="Buscar por nombre o correo" style="width:min(390px,100%);background:#080808;color:#fff;border:1px solid #333;border-radius:8px;padding:11px;margin-bottom:12px"><div class="table-wrap"><table class="tbl"><thead><tr><th>Nombre</th><th>Correo</th><th>Membresía</th><th>Pago</th><th>Acción</th></tr></thead><tbody id="clientBody"></tbody></table></div></div>`;
     const draw=rows=>clientBody.innerHTML=rows.map(x=>{
       const m=byProfile[x.id],p=pending[x.id],active=m?.status==='active'&&m?.end_date>=today();
-      return `<tr><td><b>${esc(x.full_name)}</b></td><td>${esc(x.email||'—')}</td><td><span class="pill ${active?'ok':m?.status==='pending'?'warn':'bad'}">${active?'ACTIVA':m?.status==='pending'?'PENDIENTE':'SIN MEMBRESÍA'}</span>${m?.membership_plans?.name?`<small style="display:block;color:#888;margin-top:4px">${esc(m.membership_plans.name)}</small>`:''}</td><td>${p?`<span class="pill warn">${money(p.amount)} · PENDIENTE</span>`:active?'<span class="pill ok">PAGADO</span>':'—'}</td><td><div class="actions">${p?`<button class="btn red" onclick="confirmPayment('${p.id}')">CONFIRMAR PAGO</button>`:active?'<span class="pill ok">ACTIVA</span>':'<button class="btn out" onclick="adminPaymentForm()">REGISTRAR PAGO</button>'}<button class="btn danger" onclick="deleteClient('${x.id}',${JSON.stringify(x.full_name||'este cliente')})">ELIMINAR</button></div></td></tr>`;
+      return `<tr><td><b>${esc(x.full_name)}</b></td><td>${esc(x.email||'—')}</td><td><span class="pill ${active?'ok':m?.status==='pending'?'warn':'bad'}">${active?'ACTIVA':m?.status==='pending'?'PENDIENTE':'SIN MEMBRESÍA'}</span>${m?.membership_plans?.name?`<small style="display:block;color:#888;margin-top:4px">${esc(m.membership_plans.name)}</small>`:''}</td><td>${p?`<span class="pill warn">${money(p.amount)} · PENDIENTE</span>`:active?'<span class="pill ok">PAGADO</span>':'—'}</td><td><div class="actions">${p?`<button class="btn red" onclick="confirmPayment('${p.id}')">CONFIRMAR PAGO</button>`:active?'<span class="pill ok">ACTIVA</span>':'<button class="btn out" onclick="adminPaymentForm()">REGISTRAR PAGO</button>'}<button class="btn danger" onclick="deleteClient('${x.id}')">ELIMINAR</button></div></td></tr>`;
     }).join('')||'<tr><td colspan="5">No hay clientes.</td></tr>';
     draw(d.clients);
     q.oninput=()=>{const v=q.value.toLowerCase();draw(d.clients.filter(x=>(x.full_name||'').toLowerCase().includes(v)||(x.email||'').toLowerCase().includes(v)))};
   };
 
-  // Admin: see who reserved every upcoming class.
   window.adminReservations=async function(c){
     c.innerHTML='<div class="card"><div class="ey">Admin</div><h2>Cargando reservas...</h2></div>';
     const {data,error}=await sb.from('reservations').select('id,status,created_at,cancelled_at,profile_id,class_id,coach_id,profiles(full_name,email),classes(class_date,start_time,end_time,class_type,capacity),coaches(name)').order('created_at',{ascending:false});
@@ -79,7 +75,6 @@
     c.innerHTML=`<div class="hero"><div class="ey">Admin</div><h2>Reservas <span>de clases.</span></h2><p class="muted">Aquí puedes ver quién está apuntado a cada horario.</p></div><div class="card"><div class="list">${cards||'<div class="empty">No hay clases con reservas registradas.</div>'}</div></div>`;
   };
 
-  // Client: school-style weekly schedule instead of one long list.
   window.book=function(c){
     const now=new Date();
     const monday=new Date(now);
