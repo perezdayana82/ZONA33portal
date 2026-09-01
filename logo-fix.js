@@ -1,6 +1,6 @@
 (()=>{
 'use strict';
-const logo='/assets/zona33-logo-correct.svg';
+const logo='/assets/zona33-logo.png';
 const LANDING='https://zona33.pages.dev/';
 const loadSequential=async()=>{
   const files=[
