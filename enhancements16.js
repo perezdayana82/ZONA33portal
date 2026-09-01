@@ -57,7 +57,7 @@
 
   // Carga el parche final del portal admin después de los demás overrides.
   const s=document.createElement('script');
-  s.src='./enhancements18.js?v=20260901-2';
+  s.src='./enhancements18.js?v=20260901-3';
   s.onload=()=>console.log('ZONA33 admin fixes loaded');
   s.onerror=()=>console.error('No se pudo cargar enhancements18.js');
   document.head.appendChild(s);
