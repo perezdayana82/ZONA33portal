@@ -30,7 +30,9 @@ window.requestMembership=async function(planId){
 window.confirmPayment=async function(paymentId){
   if(!paymentId)return toast('Pago no encontrado.');
   if(!confirm('¿Confirmar que recibiste este pago? La membresía quedará ACTIVA.'))return;
-  const {data,error}=await sb.rpc('admin_confirm_payment',{p_payment_id:paymentId,p_method:'WhatsApp / transferencia'});
+  // Supabase payments.method only accepts: transferencia, ficha, online.
+  // WhatsApp is the contact channel, not a payment method in the DB.
+  const {data,error}=await sb.rpc('admin_confirm_payment',{p_payment_id:paymentId,p_method:'transferencia'});
   if(error)return toast(error.message);
   toast('Pago confirmado. Membresía activa.');
   await refresh();
@@ -42,7 +44,7 @@ window.adminPaymentForm=async function(){
   modal('Registrar pago',`<form class="form" onsubmit="saveAdminPayment(event)">
     <div class="field"><label>Cliente</label><select id="apclient" required><option value="">Selecciona un cliente</option>${d.clients.map(x=>`<option value="${x.id}">${esc(x.full_name)} · ${esc(x.email||'sin correo')}</option>`).join('')}</select></div>
     <div class="field"><label>Plan</label><select id="applan" required><option value="">Selecciona un plan</option>${state.plans.filter(x=>x.is_active).map(p=>`<option value="${p.id}" data-price="${p.price}">${esc(p.name)} · ${money(p.price)}</option>`).join('')}</select></div>
-    <div class="row"><div class="field"><label>Monto</label><input id="apamount" type="number" step="0.01" min="0" required></div><div class="field"><label>Método</label><select id="apmethod"><option>WhatsApp</option><option>Transferencia</option><option>Efectivo</option><option>Otro</option></select></div></div>
+    <div class="row"><div class="field"><label>Monto</label><input id="apamount" type="number" step="0.01" min="0" required></div><div class="field"><label>Método de pago</label><select id="apmethod"><option value="transferencia">Transferencia</option><option value="ficha">Ficha</option><option value="online">Pago online</option></select></div></div>
     <p class="muted">Esto registra el pago como aprobado y activa la membresía del cliente.</p>
     <button class="btn red">Registrar pago y activar membresía</button>
   </form>`);
@@ -72,7 +74,7 @@ window.adminPayments=async function(c){
   c.innerHTML='<div class="card"><div class="ey">Admin</div><h2>Cargando pagos...</h2></div>';
   const d=await adminPaymentData();if(!d)return;
   const names=Object.fromEntries(d.clients.map(x=>[x.id,x.full_name]));
-  c.innerHTML=`<div class="hero"><div class="ey">Admin</div><h2>Pagos.</h2><p class="muted">Los clientes pagan por WhatsApp. Tú confirmas o registras aquí cuando el pago ya fue recibido.</p><button class="btn red" onclick="adminPaymentForm()">REGISTRAR PAGO</button></div><div class="card"><div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Cliente</th><th>Plan</th><th>Monto</th><th>Método</th><th>Estado</th><th></th></tr></thead><tbody>${d.payments.map(x=>`<tr><td>${esc(new Date(x.created_at).toLocaleDateString('es-MX'))}</td><td>${esc(names[x.profile_id]||x.profile_id)}</td><td>${esc(x.membership_plans?.name||'—')}</td><td>${money(x.amount)}</td><td>${esc(x.method||'WhatsApp')}</td><td><span class="pill ${x.status==='approved'?'ok':x.status==='rejected'?'bad':'warn'}">${x.status==='approved'?'PAGADO':x.status==='rejected'?'RECHAZADO':'PENDIENTE'}</span></td><td>${x.status==='pending'?`<button class="btn red" onclick="confirmPayment('${x.id}')">CONFIRMAR</button>`:'<span class="pill ok">OK</span>'}</td></tr>`).join('')||'<tr><td colspan="7">No hay pagos registrados.</td></tr>'}</tbody></table></div></div>`;
+  c.innerHTML=`<div class="hero"><div class="ey">Admin</div><h2>Pagos.</h2><p class="muted">Los clientes pagan por WhatsApp. Tú confirmas o registras aquí cuando el pago ya fue recibido.</p><button class="btn red" onclick="adminPaymentForm()">REGISTRAR PAGO</button></div><div class="card"><div class="table-wrap"><table class="tbl"><thead><tr><th>Fecha</th><th>Cliente</th><th>Plan</th><th>Monto</th><th>Método</th><th>Estado</th><th></th></tr></thead><tbody>${d.payments.map(x=>`<tr><td>${esc(new Date(x.created_at).toLocaleDateString('es-MX'))}</td><td>${esc(names[x.profile_id]||x.profile_id)}</td><td>${esc(x.membership_plans?.name||'—')}</td><td>${money(x.amount)}</td><td>${esc(x.method||'transferencia')}</td><td><span class="pill ${x.status==='approved'?'ok':x.status==='rejected'?'bad':'warn'}">${x.status==='approved'?'PAGADO':x.status==='rejected'?'RECHAZADO':'PENDIENTE'}</span></td><td>${x.status==='pending'?`<button class="btn red" onclick="confirmPayment('${x.id}')">CONFIRMAR</button>`:'<span class="pill ok">OK</span>'}</td></tr>`).join('')||'<tr><td colspan="7">No hay pagos registrados.</td></tr>'}</tbody></table></div></div>`;
 };
 window.clientHome=function(c){
   const active=state.memberships.find(x=>x.status==='active'&&x.end_date>=today());
