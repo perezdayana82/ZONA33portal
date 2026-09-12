@@ -104,4 +104,9 @@
     @media(max-width:520px){.class-slot{grid-template-columns:1fr}.class-slot .btn{width:100%}.schedule-admin-card{padding:11px}}
   `;
   document.head.appendChild(style);
+
+  // Load the modern visual layer after the existing features so it can safely override them.
+  const modern=document.createElement('script');
+  modern.src='./modern-ui.js?v=20260912-1';
+  document.body.appendChild(modern);
 })();
