@@ -1,0 +1,75 @@
+(() => {
+  'use strict';
+  const URL='https://ponhllwbvhtczaphfdgw.supabase.co';
+  const KEY='sb_publishable_okgoHkX2YZFtQ9P72ckztQ_jiCuWN-6';
+  const db=window.supabase.createClient(URL,KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const money=v=>'$'+Number(v||0).toLocaleString('es-MX');
+  const day=v=>v?new Date(v+'T12:00:00').toLocaleDateString('es-MX',{day:'2-digit',month:'short'}):'—';
+  const today=()=>new Date().toISOString().slice(0,10);
+  const addDays=(v,n)=>{const d=new Date(v+'T12:00:00');d.setDate(d.getDate()+n);return d.toISOString().slice(0,10)};
+  let originalShowPage=null;
+  let financeCache=null;
+
+  function css(){
+    if(document.getElementById('b44visualcss'))return;
+    const s=document.createElement('style');s.id='b44visualcss';s.textContent=`
+      .z33-sidebar{display:none!important}.z33-shell{display:block!important;min-height:100vh!important;background:#f8f8f9!important}.z33-main{min-width:0!important}.z33-top{height:72px!important;background:#fff!important;border-bottom:1px solid #e8e8eb!important;padding:0 26px!important;justify-content:flex-start!important}.z33-top h1{font-size:20px!important;font-weight:650!important;margin:0!important}.z33-kicker{display:none!important}.z33-top-actions{margin-left:auto!important}.b44-menu{width:38px;height:38px;border:0;background:#fff;border-radius:9px;display:grid;place-items:center;font-size:24px;color:#24262b;margin-right:13px;cursor:pointer}.b44-menu:hover{background:#f3f3f4}.b44-date{color:#7b7f87;font-weight:500}.b44-page{max-width:1100px;margin:0 auto;padding:26px 28px 48px}.b44-stats{display:grid;grid-template-columns:1fr 1fr;gap:16px}.b44-stat{background:#fff;border:1px solid #e2e2e5;border-radius:16px;padding:20px;min-height:142px}.b44-icon{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-size:19px}.b44-icon.red{background:#fff2f2;color:#d3232d}.b44-icon.amber{background:#fff9e9;color:#b87900}.b44-icon.green{background:#e9fbf3;color:#12a46b}.b44-icon.gray{background:#f3f3f4;color:#333840}.b44-value{font-size:31px;line-height:1.1;font-weight:520;margin-top:13px;letter-spacing:-.03em}.b44-label{font-size:14px;color:#7f838b;margin-top:7px}.b44-chart{margin-top:16px;background:#fff;border:1px solid #e2e2e5;border-radius:16px;padding:22px}.b44-chart-title{font-size:18px;font-weight:650;margin-bottom:22px}.b44-bars{display:grid;gap:10px}.b44-bar-row{display:grid;grid-template-columns:96px 1fr 78px;align-items:center;gap:9px;font-size:12px;color:#757982}.b44-bar-track{height:30px;background:#fafafa;border-radius:5px;overflow:hidden}.b44-bar-fill{height:100%;background:#d9272f;border-radius:5px}.b44-bar-amount{text-align:right;color:#202226;font-weight:600}.b44-tabs{display:flex;gap:4px;border-bottom:1px solid #e5e5e8;margin:22px 0 16px;overflow:auto}.b44-tab{border:0;background:transparent;padding:11px 13px;font-size:12px;font-weight:650;color:#777b83;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}.b44-tab.active{color:#c61d28;border-color:#d9272f}.b44-toolbar{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:13px}.b44-input{height:40px;border:1px solid #dedfe3;border-radius:9px;padding:0 12px;min-width:270px;background:#fff}.b44-table{overflow:auto;border:1px solid #e2e2e5;border-radius:12px;background:#fff}.b44-table table{width:100%;min-width:720px;border-collapse:collapse}.b44-table th{background:#fafafa;color:#777b83;text-transform:uppercase;font-size:9px;letter-spacing:.06em;text-align:left;padding:11px;border-bottom:1px solid #ececef}.b44-table td{padding:12px 11px;border-bottom:1px solid #f0f0f2;font-size:12px}.b44-btn{height:38px;border:1px solid #dedfe3;border-radius:8px;background:#fff;padding:0 12px;font-size:11px;font-weight:650;cursor:pointer}.b44-btn.primary{background:#d9272f;border-color:#d9272f;color:#fff}.b44-empty{padding:30px;text-align:center;color:#8a8e95}.b44-overlay{position:fixed;inset:0;background:rgba(20,22,26,.28);z-index:200;display:none}.b44-overlay.show{display:block}.b44-drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,95vw);background:#fff;z-index:201;box-shadow:-16px 0 45px rgba(0,0,0,.14);padding:22px;overflow:auto;transform:translateX(100%);transition:transform .18s ease}.b44-drawer.show{transform:translateX(0)}.b44-menu-list{display:grid;gap:4px;margin-top:15px}.b44-menu-item{height:44px;border:0;background:#fff;text-align:left;border-radius:9px;padding:0 12px;font-size:13px;font-weight:600;color:#555a62;cursor:pointer}.b44-menu-item:hover,.b44-menu-item.active{background:#fff1f1;color:#b81b25}.b44-head{display:flex;align-items:center;gap:10px}.b44-head button{margin-left:auto}.b44-drawer h3{margin:0;font-size:20px}.b44-small{font-size:12px;color:#858991;margin-top:4px}@media(max-width:720px){.b44-page{padding:18px 12px 40px}.b44-stats{grid-template-columns:1fr}.b44-stat{min-height:126px}.b44-bar-row{grid-template-columns:76px 1fr 68px}.b44-input{min-width:100%;width:100%}.z33-top{padding:0 12px!important}.z33-top-actions{display:none!important}}
+    `;document.head.appendChild(s);
+  }
+
+  function shellHeader(title,sub=''){
+    const top=document.querySelector('.z33-top');if(!top)return;
+    top.innerHTML=`<button class="b44-menu" id="b44Menu" aria-label="Menú">☰</button><h1>${esc(title)}</h1>${sub?`<span class="b44-date">&nbsp;·&nbsp; ${esc(sub)}</span>`:''}`;
+    let overlay=document.getElementById('b44Overlay');
+    if(!overlay){overlay=document.createElement('div');overlay.id='b44Overlay';overlay.className='b44-overlay';document.body.appendChild(overlay);overlay.onclick=closeMenu}
+    let drawer=document.getElementById('b44Drawer');
+    if(!drawer){drawer=document.createElement('aside');drawer.id='b44Drawer';drawer.className='b44-drawer';document.body.appendChild(drawer)}
+    drawer.innerHTML=`<div class="b44-head"><div><h3>ZONA 33</h3><div class="b44-small">Panel administrativo</div></div><button class="b44-btn" onclick="window.__b44CloseMenu()">Cerrar</button></div><div class="b44-menu-list">${[['dashboard','Dashboard'],['clients','Clientes'],['agenda','Clases / Horarios'],['coaches','Coaches'],['finance','Finanzas'],['landing','Editar Landing']].map(([k,v])=>`<button class="b44-menu-item ${k==='finance'?'active':''}" onclick="window.__b44MenuGo('${k}')">${v}</button>`).join('')}</div>`;
+    document.getElementById('b44Menu').onclick=openMenu;
+    window.__b44CloseMenu=closeMenu;window.__b44MenuGo=k=>{closeMenu();setTimeout(()=>originalShowPage&&originalShowPage(k),0)};
+  }
+  function openMenu(){document.getElementById('b44Overlay')?.classList.add('show');document.getElementById('b44Drawer')?.classList.add('show')}
+  function closeMenu(){document.getElementById('b44Overlay')?.classList.remove('show');document.getElementById('b44Drawer')?.classList.remove('show')}
+
+  function fmtLongDate(){return new Date().toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'}).replace(/^./,x=>x.toUpperCase())}
+  async function getFinance(){
+    if(financeCache)return financeCache;
+    const [p,m,c,e,cl]=await Promise.all([
+      db.from('payments').select('*,profiles(full_name,email),membership_plans(name,is_founder_plan)').order('payment_date',{ascending:false}),
+      db.from('memberships').select('*,profiles(full_name,email),membership_plans(name,price,is_founder_plan)').order('end_date'),
+      db.from('classes').select('*').eq('status','scheduled').gte('class_date',today()).order('class_date').order('start_time'),
+      db.from('expenses').select('*').order('expense_date',{ascending:false}),
+      db.from('profiles').select('*').eq('role','cliente').order('created_at',{ascending:false})
+    ]);
+    financeCache={payments:p.data||[],memberships:m.data||[],classes:c.data||[],expenses:e.data||[],clients:cl.data||[]};return financeCache;
+  }
+  const currentMonth=()=>today().slice(0,7);
+  function monthStart(){return currentMonth()+'-01'}
+  function statCard(icon,cls,value,label){return `<div class="b44-stat"><div class="b44-icon ${cls}">${icon}</div><div class="b44-value">${money(value)}</div><div class="b44-label">${label}</div></div>`}
+  function countCard(icon,cls,value,label){return `<div class="b44-stat"><div class="b44-icon ${cls}">${icon}</div><div class="b44-value">${value}</div><div class="b44-label">${label}</div></div>`}
+
+  async function financeOverview(){
+    const f=await getFinance();
+    const start=monthStart();const end=today();
+    const approved=f.payments.filter(x=>x.status==='approved'&&String(x.payment_date||x.created_at||'').slice(0,10)>=start&&String(x.payment_date||x.created_at||'').slice(0,10)<=end);
+    const pending=f.payments.filter(x=>x.status==='pending');
+    const income=approved.reduce((s,x)=>s+Number(x.amount||0),0);
+    const pendingAmount=pending.reduce((s,x)=>s+Number(x.amount||0),0);
+    const active=f.memberships.filter(x=>x.status==='active'&&x.end_date>=today()).length;
+    const expiring=f.memberships.filter(x=>x.status==='active'&&x.end_date>=today()&&x.end_date<=addDays(today(),7)).length;
+    const newClients=f.clients.filter(x=>String(x.created_at||'').slice(0,10)>=start).length;
+    const byDay={};approved.forEach(x=>{const d=String(x.payment_date||x.created_at||'').slice(0,10);byDay[d]=(byDay[d]||0)+Number(x.amount||0)});
+    const days=Object.entries(byDay).sort((a,b)=>a[0].localeCompare(b[0]));const max=Math.max(1,...days.map(x=>x[1]));
+    shellHeader('Finanzas',fmtLongDate());
+    document.querySelector('#content').innerHTML=`<div class="b44-page"><div class="b44-stats">${statCard('↗','red',income,'Ingresos del periodo')}${statCard('◷','amber',pendingAmount,'Pagos pendientes')}${countCard('♧','green',active,'Membresías activas')}${countCard('▣','amber',expiring,'Por vencer')}${countCard('＋','gray',newClients,'Nuevos clientes')}</div><div class="b44-chart"><div class="b44-chart-title">Ingresos por día</div><div class="b44-bars">${days.length?days.map(([d,v])=>`<div class="b44-bar-row"><span>${esc(d)}</span><div class="b44-bar-track"><div class="b44-bar-fill" style="width:${Math.max(4,(v/max)*100)}%"></div></div><span class="b44-bar-amount">${money(v)}</span></div>`).join(''):'<div class="b44-empty">No hay ingresos registrados en este periodo.</div>'}</div></div><div class="b44-tabs"><button class="b44-tab active" data-fin="payments">Pagos</button><button class="b44-tab" data-fin="memberships">Membresías</button><button class="b44-tab" data-fin="plans">Planes</button><button class="b44-tab" data-fin="founders">Códigos de fundadores</button><button class="b44-tab" data-fin="reports">Reportes</button></div><div id="b44finbody"></div></div>`;
+    document.querySelectorAll('[data-fin]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-fin]').forEach(x=>x.classList.remove('active'));b.classList.add('active');financeTab(b.dataset.fin)});financeTab('payments');
+  }
+  function financeTab(tab){const body=document.getElementById('b44finbody');const f=financeCache;if(tab==='payments'){body.innerHTML=`<div class="b44-toolbar"><input class="b44-input" id="b44search" placeholder="Buscar cliente o concepto"><button class="b44-btn primary" onclick="window.__b44RegisterPayment()">Registrar pago</button></div><div class="b44-table"><table><thead><tr><th>Cliente</th><th>Concepto</th><th>Monto</th><th>Fecha</th><th>Método</th><th>Estado</th></tr></thead><tbody id="b44payrows"></tbody></table></div>`;const draw=rows=>document.getElementById('b44payrows').innerHTML=rows.length?rows.map(p=>`<tr><td><b>${esc(p.profiles?.full_name||'Cliente')}</b><div class="b44-small">${esc(p.profiles?.email||'')}</div></td><td>${esc(p.concept||p.membership_plans?.name||'Membresía')}</td><td><b>${money(p.amount)}</b></td><td>${day(p.payment_date)}</td><td>${esc(p.method||'—')}</td><td>${p.status==='approved'?'Pagado':p.status==='pending'?'Pendiente':'Rechazado'}</td></tr>`).join(''):'<tr><td colspan="6" class="b44-empty">Sin pagos.</td></tr>';draw(f.payments);document.getElementById('b44search').oninput=e=>{const q=e.target.value.toLowerCase();draw(f.payments.filter(p=>`${p.profiles?.full_name||''} ${p.profiles?.email||''} ${p.concept||''}`.toLowerCase().includes(q)))}}else if(tab==='memberships'){body.innerHTML=`<div class="b44-table"><table><thead><tr><th>Cliente</th><th>Plan</th><th>Inicio</th><th>Vence</th><th>Estado</th></tr></thead><tbody>${f.memberships.map(m=>`<tr><td>${esc(m.profiles?.full_name||'')}</td><td>${esc(m.membership_plans?.name||'')}</td><td>${day(m.start_date)}</td><td>${day(m.end_date)}</td><td>${esc(m.status)}</td></tr>`).join('')}</tbody></table></div>`}else if(tab==='plans'){body.innerHTML=`<div class="b44-stats">${(awaitPlans()).map(p=>`<div class="b44-stat"><div class="b44-icon ${p.is_founder_plan?'red':'gray'}">▣</div><div class="b44-value">${money(p.is_founder_plan?500:p.price)}</div><div class="b44-label">${esc(p.name)}</div></div>`).join('')}</div>`}else if(tab==='founders'){body.innerHTML=`<div class="b44-table"><table><thead><tr><th>Código</th><th>Estado</th><th>Creado</th><th>Usado</th></tr></thead><tbody>${(awaitFounders()).map(x=>`<tr><td><b>${esc(x.code)}</b></td><td>${x.is_active===false?'Inactivo':x.used_by?'Usado':'Activo'}</td><td>${day(String(x.created_at||'').slice(0,10))}</td><td>${x.used_at?day(String(x.used_at).slice(0,10)):'—'}</td></tr>`).join('')}</tbody></table></div>`}else{const income=f.payments.filter(p=>p.status==='approved').reduce((s,p)=>s+Number(p.amount||0),0);const out=f.expenses.reduce((s,p)=>s+Number(p.amount||0),0);body.innerHTML=`<div class="b44-stats">${statCard('↗','red',income,'Ingresos')}${statCard('↘','amber',out,'Egresos')}${statCard('=', 'gray',income-out,'Balance')}${countCard('♧','green',f.memberships.filter(m=>m.status==='active').length,'Membresías activas')}</div>`}}
+  async function awaitPlans(){if(financeCache.plans)return financeCache.plans;const {data}=await db.from('membership_plans').select('*').order('sort_order').order('name');financeCache.plans=data||[];return financeCache.plans}
+  async function awaitFounders(){if(financeCache.founders)return financeCache.founders;const {data}=await db.from('founder_codes').select('*').order('created_at',{ascending:false});financeCache.founders=data||[];return financeCache.founders}
+  window.__b44RegisterPayment=()=>{if(window.__z33PaymentForm)window.__z33PaymentForm();else alert('Registrar pago')};
+
+  function applyShell(){css();if(!window.showPage)return false;originalShowPage=window.showPage;window.showPage=page=>{if(page==='finance'){window.__b44FinanceOverview();return}return originalShowPage(page)};window.__b44FinanceOverview=financeOverview;return true}
+  let tries=0;const timer=setInterval(()=>{if(applyShell()||++tries>80)clearInterval(timer)},100);
+})();
