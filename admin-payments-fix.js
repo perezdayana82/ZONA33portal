@@ -23,31 +23,36 @@
 
   async function waitForAdmin() {
     for (let i = 0; i < 80; i += 1) {
-      if (document.querySelector('#z33-drawer') && window.z33CloseDrawer && window.z33PaymentForm) return;
+      if (document.querySelector('#z33-drawer') && window.z33CloseDrawer) return;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 
-  window.z33PaymentForm = async function paymentFormFixed(id) {
+  window.z33PaymentForm = async function paymentFormFixed() {
     await waitForAdmin();
 
-    const selectedRows = [...document.querySelectorAll('#z33-content select option')];
-    const clients = selectedRows
-      .filter((option) => option.value && option.textContent.includes('—'))
-      .map((option) => ({ id: option.value, label: option.textContent }));
+    const { data: clients, error: clientsError } = await db
+      .from('profiles')
+      .select('id,full_name,email')
+      .eq('role', 'cliente')
+      .order('full_name');
 
-    let current = null;
-    if (id) {
-      const row = [...document.querySelectorAll('#z33-pay-body tr')].find((tr) => tr.querySelector('button')?.getAttribute('onclick')?.includes(id));
-      if (row) current = { id };
+    if (clientsError) {
+      alert(`No se pudieron cargar los clientes: ${clientsError.message}`);
+      return;
     }
 
-    if (!openDrawer(id ? 'Editar pago' : 'Registrar pago', `
+    if (!clients?.length) {
+      alert('No hay clientes registrados para asignar el pago.');
+      return;
+    }
+
+    if (!openDrawer('Registrar pago', `
       <form id="z33-payment-fix-form" class="z33a-form">
         <div class="z33a-row">
           <label>Cliente
             <select id="z33pf-client" required>
-              ${clients.length ? clients.map((c) => `<option value="${esc(c.id)}">${esc(c.label)}</option>`).join('') : '<option value="">No hay clientes disponibles</option>'}
+              ${clients.map((c) => `<option value="${esc(c.id)}">${esc(c.full_name || 'Cliente')} — ${esc(c.email || '')}</option>`).join('')}
             </select>
           </label>
           <label>Concepto<input id="z33pf-concept" value="Mensualidad" required></label>
@@ -75,7 +80,7 @@
           </label>
         </div>
         <label>Notas<textarea id="z33pf-notes" placeholder="Nota opcional"></textarea></label>
-        <div class="z33a-muted">Los pagos administrativos se guardan mediante una operación protegida para el administrador.</div>
+        <div class="z33a-muted">Los pagos administrativos se guardan directamente en Finanzas y quedan ligados al cliente.</div>
         <div class="z33a-actions-row">
           <button type="button" class="z33a-btn" onclick="window.z33CloseDrawer()">Cancelar</button>
           <button class="z33a-btn red" id="z33pf-save">Guardar pago</button>
@@ -86,11 +91,11 @@
 
     const form = document.querySelector('#z33-payment-fix-form');
     const errorBox = document.querySelector('#z33pf-error');
-    if (!form) return;
+    const button = document.querySelector('#z33pf-save');
+    if (!form || !button) return;
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      const button = document.querySelector('#z33pf-save');
       button.disabled = true;
       button.textContent = 'Guardando…';
       errorBox.textContent = '';
@@ -104,13 +109,6 @@
         p_payment_date: document.querySelector('#z33pf-date').value,
         p_notes: document.querySelector('#z33pf-notes').value.trim() || null,
       };
-
-      if (!payload.p_profile_id) {
-        errorBox.textContent = 'Selecciona un cliente.';
-        button.disabled = false;
-        button.textContent = 'Guardar pago';
-        return;
-      }
 
       if (!(payload.p_amount >= 0)) {
         errorBox.textContent = 'El monto no es válido.';
