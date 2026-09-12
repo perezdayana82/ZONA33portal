@@ -1,0 +1,1 @@
+ZONA 33 Portal admin UI rebuilt against the Base44 reference recording: compact sidebar, Inicio dashboard, Agenda day/week calendar, class drawer, clients, coaches, finance tabs, and fixed class capacity of 10. Landing remains separate.
