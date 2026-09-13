@@ -41,9 +41,15 @@
   const CLASS_TYPES = ['Functional', 'Strength', 'Mobility', 'Conditioning', 'Open Box', 'Personal'];
   const PENDING_DAYS_SOON = 7; // ventana para "por vencer"
 
+  // Horario oficial de ZONA 33. Fijo a propósito: "Generar semana" SIEMPRE
+  // usa estos valores, nunca los deduce de clases ya existentes en la base.
+  const WEEKDAY_SLOTS = ['05:30', '06:30', '07:30', '08:30', '09:30', '10:30', '11:30', '12:30', '17:00', '18:00', '19:00'];
+  const SATURDAY_SLOTS = ['07:00', '08:00', '09:00', '10:00', '11:00'];
+  const DEFAULT_SLOT_CAPACITY = 10;
+
   const state = {
     user: null, profile: null, page: 'dashboard', financeTab: 'overview', reportPeriod: 'month',
-    weekAnchor: weekMonday(today()),
+    weekAnchor: weekMonday(today()), agendaView: 'week', dayAnchor: today(),
     clients: [], coaches: [], classes: [], reservations: [], payments: [], memberships: [],
     plans: [], founders: [], expenses: [], site: {}, masterOptions: []
   };
@@ -216,6 +222,7 @@
         ${stat('✓', 'green', activeClients, 'Clientes activos')}
         ${stat('✕', 'gray', inactiveClients, 'Clientes inactivos')}
         ${stat('⚠', 'amber', soonMem, 'Por vencer (' + PENDING_DAYS_SOON + ' días)')}
+        ${stat('⛔', 'red', expiredMem, 'Membresías vencidas')}
       </div>
       <div class="z33a-grid2" style="margin-top:16px">
         <div class="z33a-card">
@@ -291,6 +298,7 @@
             <span class="z33a-pill ${ms.tone}">${ms.label}</span>
           </div>
           <div class="z33a-actions-row" style="margin-top:12px">
+            <button class="z33a-btn" id="z33-client-edit">Editar</button>
             <button class="z33a-btn" id="z33-client-toggle">${c.is_active === false ? 'Reactivar' : 'Desactivar'}</button>
             <button class="z33a-btn red" id="z33-client-pay">Registrar pago</button>
             <button class="z33a-btn danger" id="z33-client-delete">Eliminar cliente</button>
@@ -300,6 +308,7 @@
         <div class="z33a-card"><b>Reservas</b><div class="z33a-list">${rs.map((r) => `<div class="z33a-item"><span>${dateText(state.classes.find((x) => x.id === r.class_id)?.class_date)} · ${esc(r.status)}</span></div>`).join('') || '<div class="z33a-empty">Sin reservas.</div>'}</div></div>
         <div class="z33a-card"><b>Pagos</b><div class="z33a-list">${ps.map((p) => `<div class="z33a-item"><span>${esc(p.concept || 'Pago')}<div class="z33a-muted">${dateText(p.payment_date)}</div></span><b>${money(p.amount)}</b></div>`).join('') || '<div class="z33a-empty">Sin pagos.</div>'}</div></div>
       </div>`);
+    $('#z33-client-edit').onclick = () => clientEditForm(c);
     $('#z33-client-toggle').onclick = async () => {
       const next = c.is_active === false;
       const r = await db.from('profiles').update({ is_active: next, updated_at: new Date().toISOString() }).eq('id', id).eq('role', 'cliente');
@@ -311,6 +320,46 @@
       if (!confirm(`¿Eliminar PERMANENTEMENTE a ${c.full_name || 'este cliente'}?\n\nSe borrarán sus reservas, pagos y membresías. Esta acción no se puede deshacer.`)) return;
       const r = await db.rpc('admin_delete_client', { p_profile_id: id });
       if (r.error) return alert(r.error.message);
+      closeDrawer(); await route('clients');
+    };
+  }
+
+  // Actualiza el profile existente (nombre, teléfono, nacimiento y,
+  // opcionalmente, correo) vía Edge Function con service role — nunca crea
+  // un profile/membership/payment nuevo, y el cambio de correo se hace con
+  // la Auth Admin API en el servidor, no tocando auth.users desde aquí.
+  function clientEditForm(c) {
+    openDrawer('Editar cliente', `
+      <form id="z33-client-edit-form" class="z33a-form">
+        <label>Nombre completo<input id="cef-name" required></label>
+        <div class="z33a-row"><label>Correo<input id="cef-email" type="email"></label><label>Teléfono<input id="cef-phone" required></label></div>
+        <label>Fecha de nacimiento (obligatoria)<input id="cef-birth" type="date" required></label>
+        <div id="cef-msg"></div>
+        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="cef-cancel">Cancelar</button><button class="z33a-btn red" id="cef-save">Guardar cambios</button></div>
+      </form>`);
+    $('#cef-name').value = c.full_name || '';
+    $('#cef-email').value = c.email || '';
+    $('#cef-phone').value = c.phone || '';
+    $('#cef-birth').value = c.birth_date || '';
+    $('#cef-cancel').onclick = closeDrawer;
+    $('#z33-client-edit-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const msg = $('#cef-msg'); msg.innerHTML = '';
+      const btn = $('#cef-save'); btn.disabled = true; btn.textContent = 'Guardando…';
+      const resp = await db.functions.invoke('admin-update-client', {
+        body: {
+          profile_id: c.id,
+          full_name: $('#cef-name').value.trim(),
+          email: $('#cef-email').value.trim(),
+          phone: $('#cef-phone').value.trim(),
+          birth_date: $('#cef-birth').value
+        }
+      });
+      btn.disabled = false; btn.textContent = 'Guardar cambios';
+      if (resp.error || resp.data?.error) {
+        msg.innerHTML = `<div class="z33a-msg err">${esc(resp.data?.message || resp.data?.error || resp.error?.message || 'No se pudo guardar.')}</div>`;
+        return;
+      }
       closeDrawer(); await route('clients');
     };
   }
@@ -392,8 +441,12 @@
     $('#co-cancel').onclick = closeDrawer;
     $('#z33-coach-form').onsubmit = async (e) => {
       e.preventDefault();
-      const payload = { name: $('#co-name').value.trim(), specialty: $('#co-specialty').value.trim() || null, photo_url: $('#co-photo').value.trim() || null, bio: $('#co-bio').value.trim() || null, is_active: true, updated_at: new Date().toISOString() };
-      const r = id ? await db.from('coaches').update(payload).eq('id', id) : await db.from('coaches').insert(payload);
+      // is_active NO se toca aquí: editar un coach no debe reactivarlo ni
+      // desactivarlo. Ese estado solo cambia desde el botón Activar/Desactivar.
+      const payload = { name: $('#co-name').value.trim(), specialty: $('#co-specialty').value.trim() || null, photo_url: $('#co-photo').value.trim() || null, bio: $('#co-bio').value.trim() || null, updated_at: new Date().toISOString() };
+      const r = id
+        ? await db.from('coaches').update(payload).eq('id', id)
+        : await db.from('coaches').insert({ ...payload, is_active: true });
       if (r.error) return alert(r.error.message);
       closeDrawer(); await route('coaches');
     };
@@ -401,13 +454,31 @@
 
   // =================================================================
   // AGENDA / CLASES — CRUD completo + eliminación real
+  // Vista Día y vista Semana leen ambas de state.classes (una sola carga,
+  // sin refetch ni lógica duplicada); solo cambia cómo se agrupan/pintan.
   // =================================================================
+  function agendaViewToggle() {
+    return `<div class="z33a-filter-row"><button class="z33a-filter ${state.agendaView === 'day' ? 'active' : ''}" data-agenda-view="day">Día</button><button class="z33a-filter ${state.agendaView === 'week' ? 'active' : ''}" data-agenda-view="week">Semana</button></div>`;
+  }
+  function bindAgendaViewToggle() {
+    $$('[data-agenda-view]').forEach((b) => b.onclick = () => { state.agendaView = b.dataset.agendaView; agenda(); });
+  }
+  function classesForDay(d) {
+    return state.classes.filter((c) => c.class_date === d && c.status !== 'cancelled').sort((a, b) => timeText(a.start_time).localeCompare(timeText(b.start_time)));
+  }
+
   function agenda() {
+    if (state.agendaView === 'day') return agendaDay();
+    return agendaWeek();
+  }
+
+  function agendaWeek() {
     const days = Array.from({ length: 7 }, (_, i) => addDays(state.weekAnchor, i));
     const startHour = 5, endHour = 21, hourPx = 48;
     const headers = ['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM'];
-    $('#z33-content').innerHTML = `${pageShell('Clases / Horarios', 'Semana completa.', '<button class="z33a-btn red" id="z33-new-class">+ Clase</button>')}
+    $('#z33-content').innerHTML = `${pageShell('Clases / Horarios', 'Semana completa.', '<button class="z33a-btn" id="z33-generate-week">Generar semana</button><button class="z33a-btn red" id="z33-new-class">+ Clase</button>')}
       <div class="z33a-toolbar">
+        ${agendaViewToggle()}
         <div class="z33a-actions-row"><button class="z33a-btn" id="z33-week-prev">← Semana</button><button class="z33a-btn" id="z33-week-today">Hoy</button><button class="z33a-btn" id="z33-week-next">Semana →</button></div>
         <div class="z33a-sub">${new Date(days[0] + 'T12:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })} – ${new Date(days[6] + 'T12:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
       </div>
@@ -415,7 +486,7 @@
         <div class="z33a-week-head"><div></div>${days.map((d, i) => `<div><small>${headers[i]}</small><b>${new Date(d + 'T12:00:00').getDate()}</b></div>`).join('')}</div>
         <div class="z33a-week-body">
           <div class="z33a-time-col">${Array.from({ length: endHour - startHour + 1 }, (_, i) => `<span class="z33a-time" style="top:${i * hourPx}px">${String(startHour + i).padStart(2, '0')}:00</span>`).join('')}</div>
-          <div class="z33a-day-cols">${days.map((d) => `<div class="z33a-day-col">${Array.from({ length: endHour - startHour + 1 }, (_, i) => `<div class="z33a-hour" style="top:${i * hourPx}px"></div>`).join('')}${state.classes.filter((c) => c.class_date === d && c.status !== 'cancelled').map((c) => {
+          <div class="z33a-day-cols">${days.map((d) => `<div class="z33a-day-col">${Array.from({ length: endHour - startHour + 1 }, (_, i) => `<div class="z33a-hour" style="top:${i * hourPx}px"></div>`).join('')}${classesForDay(d).map((c) => {
             const top = (parseMinutes(c.start_time) - startHour * 60) / 60 * hourPx;
             const h = (Number(c.duration_minutes || 60) / 60) * hourPx;
             const booked = state.reservations.filter((r) => r.class_id === c.id && r.status === 'reserved').length;
@@ -424,10 +495,61 @@
         </div>
       </div></div>`;
     $('#z33-new-class').onclick = () => classForm();
+    $('#z33-generate-week').onclick = () => generateWeek();
     $('#z33-week-prev').onclick = () => { state.weekAnchor = addDays(state.weekAnchor, -7); agenda(); };
     $('#z33-week-next').onclick = () => { state.weekAnchor = addDays(state.weekAnchor, 7); agenda(); };
     $('#z33-week-today').onclick = () => { state.weekAnchor = weekMonday(today()); agenda(); };
+    bindAgendaViewToggle();
     $$('[data-open-class]').forEach((b) => b.onclick = () => openClassDetail(b.dataset.openClass));
+  }
+
+  function agendaDay() {
+    const d = state.dayAnchor;
+    const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const label = dayNames[new Date(d + 'T12:00:00').getDay()] + ' ' + new Date(d + 'T12:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' });
+    const rows = classesForDay(d);
+    $('#z33-content').innerHTML = `${pageShell('Clases / Horarios', label, '<button class="z33a-btn red" id="z33-new-class">+ Clase</button>')}
+      <div class="z33a-toolbar">
+        ${agendaViewToggle()}
+        <div class="z33a-actions-row"><button class="z33a-btn" id="z33-day-prev">← Día</button><button class="z33a-btn" id="z33-day-today">Hoy</button><button class="z33a-btn" id="z33-day-next">Día →</button></div>
+      </div>
+      <div class="z33a-card"><div class="z33a-list">${rows.length ? rows.map((c) => {
+        const booked = state.reservations.filter((r) => r.class_id === c.id && r.status === 'reserved').length;
+        return `<div class="z33a-item" data-open-class="${c.id}" style="cursor:pointer"><div><b>${timeText(c.start_time)} · ${esc(c.class_type)}</b><div class="z33a-muted">${esc(c.coach?.name || 'Sin coach')} · ${c.duration_minutes || 60} min${c.is_master_class ? ' · Clase maestra' : ''}</div></div><span class="z33a-pill ${booked >= (c.capacity || 10) ? 'bad' : 'ok'}">${booked}/${c.capacity || 10}</span></div>`;
+      }).join('') : '<div class="z33a-empty">No hay clases este día.</div>'}</div></div>`;
+    $('#z33-new-class').onclick = () => classForm(null, d);
+    $('#z33-day-prev').onclick = () => { state.dayAnchor = addDays(state.dayAnchor, -1); agenda(); };
+    $('#z33-day-next').onclick = () => { state.dayAnchor = addDays(state.dayAnchor, 1); agenda(); };
+    $('#z33-day-today').onclick = () => { state.dayAnchor = today(); agenda(); };
+    bindAgendaViewToggle();
+    $$('[data-open-class]').forEach((b) => b.onclick = () => openClassDetail(b.dataset.openClass));
+  }
+
+  // Crea únicamente los slots del horario oficial que falten en la semana
+  // seleccionada (misma fecha + misma hora ⇒ no se duplica). El horario
+  // viene siempre de WEEKDAY_SLOTS/SATURDAY_SLOTS, nunca de lo que ya
+  // exista en la base.
+  async function generateWeek() {
+    const days = Array.from({ length: 7 }, (_, i) => addDays(state.weekAnchor, i));
+    const desired = [];
+    days.forEach((d, i) => {
+      const slots = i === 5 ? SATURDAY_SLOTS : i < 5 ? WEEKDAY_SLOTS : []; // i===6 (domingo): sin clases
+      slots.forEach((t) => desired.push({ class_date: d, start_time: t }));
+    });
+    const existingKeys = new Set(
+      state.classes.filter((c) => days.includes(c.class_date)).map((c) => c.class_date + '|' + timeText(c.start_time))
+    );
+    const missing = desired.filter((x) => !existingKeys.has(x.class_date + '|' + x.start_time));
+    if (!missing.length) { alert('Esta semana ya tiene todos los horarios del horario oficial.'); return; }
+    const rows = missing.map((x) => ({
+      class_date: x.class_date, start_time: x.start_time, end_time: fmtMinutes(parseMinutes(x.start_time) + 60),
+      duration_minutes: 60, class_type: 'Functional', coach_id: null, capacity: DEFAULT_SLOT_CAPACITY,
+      min_attendees: 1, is_master_class: false, status: 'scheduled'
+    }));
+    const r = await db.from('classes').insert(rows);
+    if (r.error) return alert(r.error.message);
+    await route('agenda');
+    alert(`Semana generada: ${rows.length} clase(s) nueva(s).`);
   }
 
   function openClassDetail(id) {
@@ -443,17 +565,27 @@
       </div></div>
       <div class="z33a-card" style="margin-top:10px"><b>Coach</b><div class="z33a-muted">${esc(c.coach?.name || 'Sin asignar')}</div>${c.is_master_class ? '<span class="z33a-pill warn" style="margin-top:8px">Clase maestra</span>' : ''}</div>
       <div class="z33a-card" style="margin-top:10px"><b>Reservas</b><div class="z33a-list" style="margin-top:8px">${rs.map((r) => `<div class="z33a-item"><div><b>${esc(r.profiles?.full_name || 'Cliente')}</b><div class="z33a-muted">${esc(r.profiles?.phone || '')} · ${esc(r.profiles?.email || '')}</div></div><span class="z33a-pill ${r.status === 'reserved' ? 'ok' : 'warn'}">${esc(r.status)}</span></div>`).join('') || '<div class="z33a-empty">Sin reservas.</div>'}</div></div>
-      <div class="z33a-actions-row" style="margin-top:12px"><button class="z33a-btn" id="z33-class-edit">Editar</button><button class="z33a-btn danger" id="z33-class-delete">Eliminar clase</button></div>`);
+      <div class="z33a-actions-row" style="margin-top:12px">
+        <button class="z33a-btn" id="z33-class-edit">Editar</button>
+        ${c.status !== 'cancelled' ? '<button class="z33a-btn" id="z33-class-cancel">Cancelar clase</button>' : '<span class="z33a-pill bad">Cancelada</span>'}
+        <button class="z33a-btn danger" id="z33-class-delete">Eliminar clase</button>
+      </div>`);
     $('#z33-class-edit').onclick = () => classForm(id);
+    $('#z33-class-cancel')?.addEventListener('click', async () => {
+      if (!confirm('¿Cancelar esta clase?\n\nEl registro y su historial de reservas se conservan; solo cambia su estado a "cancelled". Esto es distinto de eliminarla.')) return;
+      const r = await db.from('classes').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', id);
+      if (r.error) return alert(r.error.message);
+      closeDrawer(); await route('agenda');
+    });
     $('#z33-class-delete').onclick = async () => {
-      if (!confirm('¿Eliminar esta clase de forma PERMANENTE?\n\nSus reservas asociadas también se eliminarán. Esta acción no se puede deshacer.')) return;
+      if (!confirm('¿Eliminar esta clase de forma PERMANENTE?\n\nSus reservas asociadas también se eliminarán. Esta acción no se puede deshacer. (Si solo quieres cancelarla y conservar el historial, usa "Cancelar clase".)')) return;
       const r = await db.rpc('admin_delete_class', { p_class_id: id });
       if (r.error) return alert(r.error.message);
       closeDrawer(); await route('agenda');
     };
   }
 
-  function classForm(id) {
+  function classForm(id, presetDate) {
     const c = id ? state.classes.find((v) => v.id === id) : null;
     const existingCoachIds = new Set(state.masterOptions.filter((o) => o.class_id === id).map((o) => o.coach_id));
     openDrawer(id ? 'Editar clase' : 'Nueva clase', `
@@ -468,7 +600,7 @@
         </div>
         <div class="z33a-row">
           <label>Coach<select id="cf-coach"><option value="">Sin coach</option>${state.coaches.filter((x) => x.is_active !== false).map((co) => `<option value="${co.id}">${esc(co.name)}</option>`).join('')}</select></label>
-          <label>Estado<select id="cf-status"><option value="scheduled">Programada</option><option value="cancelled">Cancelada</option><option value="completed">Completada</option></select></label>
+          <label>Estado<select id="cf-status"><option value="scheduled">Programada</option><option value="completed">Completada</option>${c?.status === 'cancelled' ? '<option value="cancelled" disabled>Cancelada (usa "Cancelar clase" para revertir)</option>' : ''}</select></label>
         </div>
         <div class="z33a-row">
           <label>Capacidad (1–10)<input id="cf-cap" type="number" min="1" max="10" required></label>
@@ -482,7 +614,7 @@
         <div id="cf-msg"></div>
         <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="cf-cancel">Cancelar</button><button class="z33a-btn red">Guardar clase</button></div>
       </form>`);
-    $('#cf-date').value = c?.class_date || today();
+    $('#cf-date').value = c?.class_date || presetDate || today();
     $('#cf-time').value = timeText(c?.start_time || '08:00');
     $('#cf-duration').value = String(c?.duration_minutes || 60);
     $('#cf-type').value = c?.class_type || 'Functional';
@@ -529,7 +661,7 @@
 
   function finance() {
     $('#z33-content').innerHTML = `${pageShell('Finanzas', 'Pagos, membresías, planes, fundadores y reportes.')}
-      <div class="z33a-tabs">${[['overview', 'Resumen'], ['payments', 'Pagos'], ['plans', 'Planes'], ['founders', 'Fundadores'], ['expenses', 'Egresos']].map(([k, l]) => `<button class="z33a-tab ${state.financeTab === k ? 'active' : ''}" data-finance-tab="${k}">${l}</button>`).join('')}</div>
+      <div class="z33a-tabs">${[['overview', 'Resumen'], ['payments', 'Pagos'], ['memberships', 'Membresías'], ['plans', 'Planes'], ['founders', 'Fundadores'], ['expenses', 'Egresos']].map(([k, l]) => `<button class="z33a-tab ${state.financeTab === k ? 'active' : ''}" data-finance-tab="${k}">${l}</button>`).join('')}</div>
       <div id="z33-finance-body"></div>`;
     $$('[data-finance-tab]').forEach((b) => b.onclick = () => { state.financeTab = b.dataset.financeTab; finance(); });
     financeTabBody();
@@ -539,9 +671,25 @@
     const body = $('#z33-finance-body'); if (!body) return;
     if (state.financeTab === 'overview') return financeOverview(body);
     if (state.financeTab === 'payments') return financePayments(body);
+    if (state.financeTab === 'memberships') return financeMemberships(body);
     if (state.financeTab === 'plans') return financePlans(body);
     if (state.financeTab === 'founders') return financeFounders(body);
     return financeExpenses(body);
+  }
+
+  // Una fila por cliente (su membresía vigente/más reciente vía
+  // latestMembershipByClient, la misma función que usan Dashboard y
+  // Clientes) — nunca una fila por cada registro histórico de memberships.
+  function financeMemberships(body) {
+    const latest = latestMembershipByClient();
+    const rows = state.clients.map((c) => ({ client: c, m: latest.get(c.id) }))
+      .sort((a, b) => (b.m?.end_date || '').localeCompare(a.m?.end_date || ''));
+    body.innerHTML = `<div class="z33a-table"><table><thead><tr><th>Cliente</th><th>Plan</th><th>Inicio</th><th>Vencimiento</th><th>Estado</th><th>Monto del plan</th><th></th></tr></thead><tbody>${rows.map(({ client, m }) => {
+      const ms = membershipStatus(m);
+      const planAmount = m ? (m.membership_plans?.is_founder_plan ? 500 : m.membership_plans?.price) : null;
+      return `<tr><td><b>${esc(client.full_name || '')}</b><div class="z33a-muted">${esc(client.email || '')}</div></td><td>${esc(m?.membership_plans?.name || '—')}</td><td>${m ? dateText(m.start_date) : '—'}</td><td>${m ? dateText(m.end_date) : '—'}</td><td><span class="z33a-pill ${ms.tone}">${ms.label}</span></td><td>${planAmount != null ? money(planAmount) : '—'}</td><td><button class="z33a-btn" data-mem-pay="${client.id}">Registrar pago</button></td></tr>`;
+    }).join('') || '<tr><td colspan="7" class="z33a-empty">Sin clientes.</td></tr>'}</tbody></table></div>`;
+    $$('[data-mem-pay]').forEach((b) => b.onclick = () => paymentForm(b.dataset.memPay));
   }
 
   function periodRange(period) {
