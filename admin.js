@@ -49,9 +49,10 @@
 
   const state = {
     user: null, profile: null, page: 'dashboard', financeTab: 'overview', reportPeriod: 'month',
-    weekAnchor: weekMonday(today()), agendaView: 'week', dayAnchor: today(),
+    weekAnchor: weekMonday(today()), agendaView: 'week', dayAnchor: today(), landingTab: 'general',
     clients: [], coaches: [], classes: [], reservations: [], payments: [], memberships: [],
-    plans: [], founders: [], expenses: [], site: {}, masterOptions: []
+    plans: [], founders: [], expenses: [], site: {}, masterOptions: [],
+    wods: [], leaderboard: [], announcements: [], instagram: [], landingPeople: []
   };
 
   // ---------------------------------------------------------------
@@ -127,7 +128,7 @@
   // Carga de datos — una sola vez por navegación, todo desde Supabase
   // ---------------------------------------------------------------
   async function loadData() {
-    const [clients, coaches, classes, reservations, payments, memberships, plans, founders, expenses, site, masterOptions] = await Promise.all([
+    const [clients, coaches, classes, reservations, payments, memberships, plans, founders, expenses, site, masterOptions, wods, leaderboard, announcements, instagram, landingPeople] = await Promise.all([
       db.from('profiles').select('*').eq('role', 'cliente').order('created_at', { ascending: false }),
       db.from('coaches').select('*').order('is_active', { ascending: false }).order('name'),
       db.from('classes').select('*').order('class_date', { ascending: false }).order('start_time'),
@@ -142,7 +143,17 @@
       db.from('founder_codes').select('*').order('created_at', { ascending: false }),
       db.from('expenses').select('*').order('expense_date', { ascending: false }),
       db.from('site_content').select('*').order('key'),
-      db.from('master_class_coach_options').select('*')
+      db.from('master_class_coach_options').select('*'),
+      // Contenido del landing: mismas tablas que consulta el sitio público
+      // (confirmado en logs reales de producción), una sola fuente de verdad.
+      db.from('wods').select('*').order('wod_date', { ascending: false }),
+      db.from('leaderboard_entries').select('*').order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }),
+      // Comunidad → avisos: se usa `announcements` (confirmado con tráfico
+      // real del landing público en edge_logs), NO `community_posts` (tabla
+      // sin uso real, dejaría al admin editando contenido que nunca aparece).
+      db.from('announcements').select('*').order('published_at', { ascending: false }),
+      db.from('instagram_posts').select('*').order('sort_order').order('created_at', { ascending: false }),
+      db.from('landing_people').select('*').order('position').order('created_at', { ascending: false })
     ]);
     state.clients = clients.data || [];
     state.coaches = coaches.data || [];
@@ -155,6 +166,11 @@
     state.expenses = expenses.data || [];
     state.site = Object.fromEntries((site.data || []).map((x) => [x.key, x.value]));
     state.masterOptions = masterOptions.data || [];
+    state.wods = wods.data || [];
+    state.leaderboard = leaderboard.data || [];
+    state.announcements = announcements.data || [];
+    state.instagram = instagram.data || [];
+    state.landingPeople = landingPeople.data || [];
   }
 
   function stat(icon, tone, value, label) {
@@ -1075,22 +1091,539 @@
   }
 
   // =================================================================
-  // LANDING / CONTENIDO
+  // LANDING / CONTENIDO — CMS completo. Una sola fuente de verdad:
+  // el contenido editorial vive en site_content (JSON por key) y en las
+  // tablas reales del landing (wods, leaderboard_entries, announcements,
+  // instagram_posts, landing_people). Horarios/Coaches/Planes NO se
+  // duplican aquí: son vistas de solo lectura de classes/coaches/
+  // membership_plans con un botón al módulo real correspondiente.
   // =================================================================
+  function imagePickerHtml(fileId, previewId, msgId, currentUrl, size) {
+    size = size || 72;
+    return `<div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+      <img id="${previewId}" src="${esc(currentUrl || './assets/zona33-logo-portal.webp')}" alt="" style="width:${size}px;height:${size}px;border-radius:12px;object-fit:cover;background:#f1f1f3;flex:none">
+      <div style="flex:1;min-width:0">
+        <input id="${fileId}" type="file" accept="image/*">
+        <div id="${msgId}" class="z33a-muted" style="margin-top:4px"></div>
+      </div>
+    </div>`;
+  }
+  // Sube el archivo elegido a Storage (nunca pide URL manual) y entrega la
+  // URL pública resultante vía onUploaded. Reutilizable en toda la sección.
+  function wireImageUpload(fileId, previewId, msgId, bucket, folder, onUploaded) {
+    const input = $('#' + fileId); if (!input) return;
+    input.onchange = async (e) => {
+      const file = e.target.files && e.target.files[0]; if (!file) return;
+      const preview = $('#' + previewId), msg = $('#' + msgId);
+      if (!/^image\//.test(file.type)) { if (msg) msg.innerHTML = '<div class="z33a-msg err">El archivo debe ser una imagen.</div>'; return; }
+      if (file.size > 8 * 1024 * 1024) { if (msg) msg.innerHTML = '<div class="z33a-msg err">La imagen no puede pesar más de 8MB.</div>'; return; }
+      if (preview) preview.src = URL.createObjectURL(file);
+      if (msg) msg.textContent = 'Subiendo imagen…';
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const up = await db.storage.from(bucket).upload(path, file, { upsert: true, contentType: file.type || 'image/jpeg' });
+      if (up.error) { if (msg) msg.innerHTML = `<div class="z33a-msg err">${esc(up.error.message)}</div>`; return; }
+      const url = db.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+      if (msg) msg.textContent = 'Imagen lista.';
+      onUploaded(url);
+    };
+  }
+  // Guarda site_content SIEMPRE por merge (nunca reemplaza el JSON
+  // completo): evita borrar campos de otras pestañas que compartan la
+  // misma key (ej. brand.instagram al guardar solo el logo).
+  async function siteSave(key, patch) {
+    const value = { ...(state.site[key] || {}), ...patch };
+    const r = await db.from('site_content').upsert({ key, value, is_public: true, updated_by: state.user.id, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    if (r.error) { alert(r.error.message); return false; }
+    await route('landing');
+    return true;
+  }
+
+  const LANDING_TABS = [
+    ['general', 'General / Marca'], ['hero', 'Hero'], ['services', 'Servicios'], ['schedule', 'Horarios'],
+    ['coachesref', 'Coaches'], ['plansref', 'Planes'], ['wod', 'WOD'], ['leaderboard', 'Leaderboard'],
+    ['community', 'Comunidad'], ['instagram', 'Instagram'], ['gallery', 'Galería'], ['contact', 'Contacto'],
+    ['social', 'Redes'], ['footer', 'Footer']
+  ];
+  // "Vista previa" NO es un preview embebido: este repositorio no contiene
+  // el landing público (vive en un proyecto/repositorio aparte). El botón
+  // abre el sitio público REAL en una pestaña nueva, para no crear un
+  // landing paralelo ni simular un preview que no refleja el sitio real.
   function landing() {
-    const s = state.site; const hero = s.hero || {}, brand = s.brand || {}, contact = s.contact || {}, community = s.community || {};
-    $('#z33-content').innerHTML = `${pageShell('Editar Landing', 'Contenido público del sitio.')}
-      <div class="z33a-grid2">
-        <div class="z33a-card"><div class="z33a-kicker">Marca</div><h3>Logo</h3><form class="z33a-form" id="f-brand"><label>URL del logo<input id="ls-logo" value="${esc(brand.logo_url || '')}"></label><button class="z33a-btn red">Guardar</button></form></div>
-        <div class="z33a-card"><div class="z33a-kicker">Hero</div><h3>Portada</h3><form class="z33a-form" id="f-hero"><label>Título<input id="ls-title" value="${esc(hero.title || '')}"></label><label>Texto<textarea id="ls-copy">${esc(hero.copy || '')}</textarea></label><button class="z33a-btn red">Guardar</button></form></div>
-        <div class="z33a-card"><div class="z33a-kicker">Contacto</div><h3>Datos</h3><form class="z33a-form" id="f-contact"><label>Teléfono<input id="ls-phone" value="${esc(contact.phone || '')}"></label><label>Instagram<input id="ls-ig" value="${esc(contact.instagram || '')}"></label><label>Dirección<textarea id="ls-address">${esc(contact.address || '')}</textarea></label><button class="z33a-btn red">Guardar</button></form></div>
-        <div class="z33a-card"><div class="z33a-kicker">Comunidad</div><h3>Bloque social</h3><form class="z33a-form" id="f-community"><label>Título<input id="ls-ctitle" value="${esc(community.title || '')}"></label><label>Texto<textarea id="ls-ccopy">${esc(community.copy || '')}</textarea></label><button class="z33a-btn red">Guardar</button></form></div>
+    $('#z33-content').innerHTML = `${pageShell('Editar Landing', 'Centro de administración del contenido público de ZONA 33.', '<button class="z33a-btn" id="z33-landing-preview">Ver sitio público ↗</button>')}
+      <div class="z33a-tabs" style="flex-wrap:wrap;row-gap:6px">${LANDING_TABS.map(([k, l]) => `<button class="z33a-tab ${state.landingTab === k ? 'active' : ''}" data-landing-tab="${k}">${l}</button>`).join('')}</div>
+      <p class="z33a-muted" style="margin:8px 0 0">"Ver sitio público" abre el sitio real en una pestaña nueva — no es una vista previa interna. Los cambios que guardes aquí se reflejan ahí en cuanto el visitante recarga la página.</p>
+      <div id="z33-landing-body" style="margin-top:16px"></div>`;
+    $$('[data-landing-tab]').forEach((b) => b.onclick = () => { state.landingTab = b.dataset.landingTab; landing(); });
+    $('#z33-landing-preview').onclick = () => {
+      const url = (state.site.brand || {}).public_url;
+      if (!url) return alert('Configura la "URL del sitio público" en General / Marca para usar "Ver sitio público".');
+      window.open(url, '_blank');
+    };
+    landingTabBody();
+  }
+  function landingTabBody() {
+    const body = $('#z33-landing-body'); if (!body) return;
+    const map = {
+      general: landingGeneral, hero: landingHero, services: landingServices, schedule: landingScheduleRef,
+      coachesref: landingCoachesRef, plansref: landingPlansRef, wod: landingWod, leaderboard: landingLeaderboard,
+      community: landingCommunity, instagram: landingInstagram, gallery: landingGallery, contact: landingContact,
+      social: landingSocial, footer: landingFooter
+    };
+    (map[state.landingTab] || landingGeneral)(body);
+  }
+
+  // ---- 1. General / Marca ----
+  function landingGeneral(body) {
+    const b = state.site.brand || {};
+    body.innerHTML = `<div class="z33a-card" style="max-width:560px">
+      <h3 style="margin-top:0">General / Marca</h3>
+      <form class="z33a-form" id="f-brand">
+        <label>Logo${imagePickerHtml('brand-logo-file', 'brand-logo-preview', 'brand-logo-msg', b.logoUrl || b.logo_url)}</label>
+        <label>Nombre<input id="bg-name" value="${esc(b.name || 'ZONA 33 Functional Club')}"></label>
+        <label>Slogan<input id="bg-slogan" value="${esc(b.slogan || '')}"></label>
+        <label>URL del sitio público (para "Vista previa")<input id="bg-url" placeholder="https://..." value="${esc(b.public_url || '')}"></label>
+        <div id="bg-msg"></div>
+        <div class="z33a-actions-row"><button class="z33a-btn red">Guardar</button></div>
+      </form>
+    </div>`;
+    let logoUrl = b.logoUrl || b.logo_url || '';
+    wireImageUpload('brand-logo-file', 'brand-logo-preview', 'brand-logo-msg', 'site-media', 'logo', (url) => { logoUrl = url; });
+    $('#f-brand').onsubmit = (e) => {
+      e.preventDefault();
+      siteSave('brand', { logoUrl, logo_url: logoUrl, name: $('#bg-name').value.trim(), slogan: $('#bg-slogan').value.trim(), public_url: $('#bg-url').value.trim() || null });
+    };
+  }
+
+  // ---- 2. Hero / Portada ----
+  function landingHero(body) {
+    const h = state.site.hero || {};
+    body.innerHTML = `<div class="z33a-card" style="max-width:640px">
+      <h3 style="margin-top:0">Hero / Portada</h3>
+      <form class="z33a-form" id="f-hero">
+        <label>Imagen principal${imagePickerHtml('hero-img-file', 'hero-img-preview', 'hero-img-msg', h.imageUrl)}</label>
+        <label>Headline<input id="he-headline" value="${esc(h.headline || '')}"></label>
+        <label>Subheadline<input id="he-sub" value="${esc(h.subheadline || '')}"></label>
+        <label>Copy<textarea id="he-copy">${esc(h.copy || '')}</textarea></label>
+        <div class="z33a-row"><label>Texto CTA principal<input id="he-cta" value="${esc(h.ctaText || '')}"></label><label>Link CTA principal<input id="he-cta-link" value="${esc(h.ctaLink || '')}"></label></div>
+        <div class="z33a-row"><label>Texto CTA secundario<input id="he-cta2" value="${esc(h.ctaSecondaryText || '')}"></label><label>Link CTA secundario<input id="he-cta2-link" value="${esc(h.ctaSecondaryLink || '')}"></label></div>
+        <div id="he-msg"></div>
+        <div class="z33a-actions-row"><button class="z33a-btn red">Guardar</button></div>
+      </form>
+    </div>`;
+    let imageUrl = h.imageUrl || '';
+    wireImageUpload('hero-img-file', 'hero-img-preview', 'hero-img-msg', 'site-media', 'hero', (url) => { imageUrl = url; });
+    $('#f-hero').onsubmit = (e) => {
+      e.preventDefault();
+      siteSave('hero', {
+        imageUrl, headline: $('#he-headline').value.trim(), subheadline: $('#he-sub').value.trim(), copy: $('#he-copy').value.trim(),
+        ctaText: $('#he-cta').value.trim(), ctaLink: $('#he-cta-link').value.trim(), ctaSecondaryText: $('#he-cta2').value.trim(), ctaSecondaryLink: $('#he-cta2-link').value.trim()
+      });
+    };
+  }
+
+  // ---- 3. Servicios / Entrenamiento ----
+  // No existe una tabla dedicada para esto en el esquema real (auditado:
+  // profiles/coaches/membership_plans/classes/reservations/memberships/
+  // payments/expenses/founder_codes/wods/leaderboard_entries/
+  // community_posts/instagram_posts/landing_people/site_content/
+  // announcements/feedback/coach_confirmations/master_class_coach_options
+  // — ninguna sirve para "tarjetas de servicios"). Se usa site_content
+  // (mismo mecanismo que ya usa landing_gallery para guardar un arreglo),
+  // en vez de crear una tabla nueva para una lista editorial pequeña.
+  function landingServices(body) {
+    const items = (state.site.services || {}).items || [];
+    body.innerHTML = `<div class="z33a-toolbar"><span class="z33a-sub">Tarjetas de servicios/beneficios mostradas en el landing.</span><button class="z33a-btn red" id="z33-new-service">+ Servicio</button></div>
+      <div class="z33a-grid3" style="margin-top:12px">${items.map((it, i) => `<div class="z33a-card">
+        <img src="${esc(it.image_url || './assets/zona33-logo-portal.webp')}" alt="" style="width:100%;height:110px;object-fit:cover;border-radius:10px;background:#f1f1f3">
+        <h3 style="margin:10px 0 2px">${esc(it.name || '')}</h3>
+        <p class="z33a-muted" style="min-height:32px">${esc(it.description || '')}</p>
+        <div class="z33a-muted">${it.is_active === false ? 'Inactivo' : 'Activo'}</div>
+        <div class="z33a-actions-row">
+          <button class="z33a-btn" data-svc-edit="${i}">Editar</button>
+          <button class="z33a-btn" data-svc-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button class="z33a-btn" data-svc-down="${i}" ${i === items.length - 1 ? 'disabled' : ''}>↓</button>
+          <button class="z33a-btn danger" data-svc-del="${i}">Eliminar</button>
+        </div>
+      </div>`).join('') || '<div class="z33a-empty">Sin servicios todavía.</div>'}</div>`;
+    $('#z33-new-service').onclick = () => serviceForm(items, -1);
+    $$('[data-svc-edit]').forEach((b) => b.onclick = () => serviceForm(items, Number(b.dataset.svcEdit)));
+    $$('[data-svc-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('¿Eliminar este servicio?')) return;
+      await siteSave('services', { items: items.filter((_, i) => i !== Number(b.dataset.svcDel)) });
+    });
+    $$('[data-svc-up]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.svcUp); const next = items.slice(); [next[i - 1], next[i]] = [next[i], next[i - 1]]; await siteSave('services', { items: next }); });
+    $$('[data-svc-down]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.svcDown); const next = items.slice(); [next[i + 1], next[i]] = [next[i], next[i + 1]]; await siteSave('services', { items: next }); });
+  }
+  function serviceForm(items, index) {
+    const it = index >= 0 ? items[index] : {};
+    openDrawer(index >= 0 ? 'Editar servicio' : 'Nuevo servicio', `
+      <form id="z33-service-form" class="z33a-form">
+        <label>Nombre<input id="sv-name" value="${esc(it.name || '')}" required></label>
+        <label>Descripción<textarea id="sv-desc">${esc(it.description || '')}</textarea></label>
+        <label>Icono (opcional, texto/emoji)<input id="sv-icon" value="${esc(it.icon || '')}"></label>
+        <label>Imagen${imagePickerHtml('sv-img-file', 'sv-img-preview', 'sv-img-msg', it.image_url)}</label>
+        <label class="z33a-check"><input id="sv-active" type="checkbox" ${it.is_active === false ? '' : 'checked'}> Activo</label>
+        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="sv-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
+      </form>`);
+    let imageUrl = it.image_url || '';
+    wireImageUpload('sv-img-file', 'sv-img-preview', 'sv-img-msg', 'site-media', 'services', (url) => { imageUrl = url; });
+    $('#sv-cancel').onclick = closeDrawer;
+    $('#z33-service-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const entry = { name: $('#sv-name').value.trim(), description: $('#sv-desc').value.trim(), icon: $('#sv-icon').value.trim() || null, image_url: imageUrl || null, is_active: $('#sv-active').checked };
+      const next = items.slice();
+      if (index >= 0) next[index] = { ...it, ...entry }; else next.push(entry);
+      closeDrawer();
+      await siteSave('services', { items: next });
+    };
+  }
+
+  // ---- 4-6. Horarios / Coaches / Planes — SOLO LECTURA a propósito ----
+  // Una sola fuente de verdad: nunca se crea una copia editorial de
+  // classes/coaches/membership_plans. Se edita en el módulo real.
+  function landingScheduleRef(body) {
+    const upcoming = state.classes.filter((c) => c.status === 'scheduled' && c.class_date >= today()).slice(0, 8);
+    body.innerHTML = `<div class="z33a-card">
+      <h3 style="margin-top:0">Horarios</h3>
+      <p class="z33a-muted">El landing lee directamente la tabla de clases — la misma que usa Agenda. No hay una copia separada: crear, modificar, cambiar coach/capacidad o cancelar una clase en Agenda se refleja automáticamente aquí y en el landing.</p>
+      <div class="z33a-table"><table><thead><tr><th>Fecha</th><th>Hora</th><th>Tipo</th><th>Coach</th><th>Capacidad</th></tr></thead><tbody>${upcoming.map((c) => `<tr><td>${dateText(c.class_date)}</td><td>${esc(c.start_time || '')}</td><td>${esc(c.class_type || '')}</td><td>${esc(c.coach?.name || '—')}</td><td>${esc(String(c.capacity ?? ''))}</td></tr>`).join('') || '<tr><td colspan="5" class="z33a-empty">Sin clases próximas.</td></tr>'}</tbody></table></div>
+      <div class="z33a-actions-row" style="margin-top:12px"><button class="z33a-btn red" id="z33-goto-agenda">Editar en Agenda</button></div>
+    </div>`;
+    $('#z33-goto-agenda').onclick = () => route('agenda');
+  }
+  function landingCoachesRef(body) {
+    body.innerHTML = `<div class="z33a-card">
+      <h3 style="margin-top:0">Coaches</h3>
+      <p class="z33a-muted">El landing muestra únicamente los coaches activos, leídos directamente del mismo registro que administra el módulo Coaches (incluida la foto). Edita ahí — no hay una copia separada.</p>
+      <div class="z33a-grid3">${state.coaches.filter((c) => c.is_active !== false).map((c) => `<div class="z33a-card"><img src="${esc(c.photo_url || './assets/zona33-logo-portal.webp')}" alt="" style="width:56px;height:56px;border-radius:12px;object-fit:cover"><h3 style="margin:8px 0 0">${esc(c.name || '')}</h3><div class="z33a-muted">${esc(c.specialty || '')}</div></div>`).join('') || '<div class="z33a-empty">Sin coaches activos.</div>'}</div>
+      <div class="z33a-actions-row" style="margin-top:12px"><button class="z33a-btn red" id="z33-goto-coaches">Editar en Coaches</button></div>
+    </div>`;
+    $('#z33-goto-coaches').onclick = () => route('coaches');
+  }
+  function landingPlansRef(body) {
+    body.innerHTML = `<div class="z33a-card">
+      <h3 style="margin-top:0">Planes</h3>
+      <p class="z33a-muted">El landing muestra los planes reales de Finanzas → Planes (incluido el Plan Fundadores, que mantiene su regla fija de $500/mes). Edita ahí — no hay una copia separada ni precios fijos en el código.</p>
+      <div class="z33a-grid3">${state.plans.filter((p) => p.is_active !== false).map((p) => `<div class="z33a-card"><div class="z33a-kicker">${p.is_founder_plan ? 'Fundadores' : 'Plan'}</div><h3>${esc(p.name)}</h3><div class="z33a-value">${money(p.is_founder_plan ? 500 : p.price)}</div><div class="z33a-muted">${p.duration_days || 30} días</div></div>`).join('') || '<div class="z33a-empty">Sin planes activos.</div>'}</div>
+      <div class="z33a-actions-row" style="margin-top:12px"><button class="z33a-btn red" id="z33-goto-plans">Editar en Finanzas</button></div>
+    </div>`;
+    $('#z33-goto-plans').onclick = () => { state.financeTab = 'plans'; route('finance'); };
+  }
+
+  // ---- 7. WOD (tabla real: wods) ----
+  function landingWod(body) {
+    body.innerHTML = `<div class="z33a-toolbar"><span class="z33a-sub">WOD mostrado en el landing.</span><button class="z33a-btn red" id="z33-new-wod">+ WOD</button></div>
+      <div class="z33a-table" style="margin-top:12px"><table><thead><tr><th>Fecha</th><th>Nombre</th><th>Formato</th><th>Estado</th><th></th></tr></thead><tbody>${state.wods.map((w) => `<tr><td>${dateText(w.wod_date)}</td><td>${esc(w.name)}</td><td>${esc(w.format)}</td><td><span class="z33a-pill ${w.is_published ? 'ok' : 'off'}">${w.is_published ? 'Publicado' : 'Oculto'}</span></td><td><button class="z33a-btn" data-wod-edit="${w.id}">Editar</button> <button class="z33a-btn danger" data-wod-del="${w.id}">Eliminar</button></td></tr>`).join('') || '<tr><td colspan="5" class="z33a-empty">Sin WODs.</td></tr>'}</tbody></table></div>`;
+    $('#z33-new-wod').onclick = () => wodForm();
+    $$('[data-wod-edit]').forEach((b) => b.onclick = () => wodForm(b.dataset.wodEdit));
+    $$('[data-wod-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('¿Eliminar este WOD?')) return;
+      const r = await db.from('wods').delete().eq('id', b.dataset.wodDel);
+      if (r.error) return alert(r.error.message);
+      await route('landing');
+    });
+  }
+  function wodForm(id) {
+    const w = id ? state.wods.find((x) => x.id === id) : {};
+    openDrawer(id ? 'Editar WOD' : 'Nuevo WOD', `
+      <form id="z33-wod-form" class="z33a-form">
+        <div class="z33a-row"><label>Fecha<input id="wd-date" type="date" required></label><label>Nombre<input id="wd-name" required></label></div>
+        <label>Formato (ej. AMRAP 20, For Time, EMOM)<input id="wd-format" required></label>
+        <label>Rounds/estructura (opcional)<input id="wd-rounds"></label>
+        <label>Movimientos (uno por línea)<textarea id="wd-movements" rows="4"></textarea></label>
+        <div class="z33a-row"><label>Time cap (min)<input id="wd-cap" type="number" min="1"></label><label>Escalado (opcional)<input id="wd-scaling"></label></div>
+        <label class="z33a-check"><input id="wd-pub" type="checkbox"> Publicado (visible en el landing)</label>
+        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="wd-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
+      </form>`);
+    $('#wd-date').value = w.wod_date || today(); $('#wd-name').value = w.name || ''; $('#wd-format').value = w.format || '';
+    $('#wd-rounds').value = w.rounds || ''; $('#wd-movements').value = (w.movements || []).join('\n');
+    $('#wd-cap').value = w.time_cap_minutes || ''; $('#wd-scaling').value = w.scaling || '';
+    $('#wd-pub').checked = w.is_published !== false;
+    $('#wd-cancel').onclick = closeDrawer;
+    $('#z33-wod-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = {
+        wod_date: $('#wd-date').value, name: $('#wd-name').value.trim(), format: $('#wd-format').value.trim(),
+        rounds: $('#wd-rounds').value.trim() || null,
+        movements: $('#wd-movements').value.split('\n').map((s) => s.trim()).filter(Boolean),
+        time_cap_minutes: $('#wd-cap').value ? Number($('#wd-cap').value) : null,
+        scaling: $('#wd-scaling').value.trim() || null, is_published: $('#wd-pub').checked, updated_at: new Date().toISOString()
+      };
+      const r = id ? await db.from('wods').update(payload).eq('id', id) : await db.from('wods').insert(payload);
+      if (r.error) return alert(r.error.message);
+      closeDrawer(); await route('landing');
+    };
+  }
+
+  // ---- 8. Leaderboard (tabla real: leaderboard_entries) ----
+  function landingLeaderboard(body) {
+    body.innerHTML = `<div class="z33a-toolbar"><span class="z33a-sub">Tabla de posiciones mostrada en el landing.</span><button class="z33a-btn red" id="z33-new-lb">+ Entrada</button></div>
+      <div class="z33a-table" style="margin-top:12px"><table><thead><tr><th>#</th><th>Atleta</th><th>Categoría</th><th>Score</th><th>WOD</th><th>Estado</th><th></th></tr></thead><tbody>${state.leaderboard.map((l) => `<tr><td>${l.position ?? '—'}</td><td>${esc(l.athlete_name)}</td><td>${esc(l.category)}</td><td>${esc(l.score)}</td><td>${esc(l.wod_name || '—')}</td><td><span class="z33a-pill ${l.is_published ? 'ok' : 'off'}">${l.is_published ? 'Publicado' : 'Oculto'}</span></td><td><button class="z33a-btn" data-lb-edit="${l.id}">Editar</button> <button class="z33a-btn danger" data-lb-del="${l.id}">Eliminar</button></td></tr>`).join('') || '<tr><td colspan="7" class="z33a-empty">Sin entradas.</td></tr>'}</tbody></table></div>`;
+    $('#z33-new-lb').onclick = () => leaderboardForm();
+    $$('[data-lb-edit]').forEach((b) => b.onclick = () => leaderboardForm(b.dataset.lbEdit));
+    $$('[data-lb-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('¿Eliminar esta entrada del leaderboard?')) return;
+      const r = await db.from('leaderboard_entries').delete().eq('id', b.dataset.lbDel);
+      if (r.error) return alert(r.error.message);
+      await route('landing');
+    });
+  }
+  function leaderboardForm(id) {
+    const l = id ? state.leaderboard.find((x) => x.id === id) : {};
+    openDrawer(id ? 'Editar entrada' : 'Nueva entrada', `
+      <form id="z33-lb-form" class="z33a-form">
+        <label>Cliente real (opcional — evita duplicar datos si el atleta ya es cliente)<select id="lb-profile"><option value="">— Sin vincular —</option>${state.clients.map((c) => `<option value="${c.id}">${esc(c.full_name || c.email)}</option>`).join('')}</select></label>
+        <label>Nombre del atleta<input id="lb-name" required></label>
+        <div class="z33a-row"><label>Categoría<input id="lb-cat" value="RX"></label><label>Posición<input id="lb-pos" type="number" min="1"></label></div>
+        <div class="z33a-row"><label>Score<input id="lb-score" required></label><label>WOD<input id="lb-wod"></label></div>
+        <label>Descripción (opcional)<textarea id="lb-desc"></textarea></label>
+        <label>Foto (opcional)${imagePickerHtml('lb-img-file', 'lb-img-preview', 'lb-img-msg', l.photo_url)}</label>
+        <label class="z33a-check"><input id="lb-pub" type="checkbox"> Publicado</label>
+        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="lb-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
+      </form>`);
+    $('#lb-name').value = l.athlete_name || ''; $('#lb-cat').value = l.category || 'RX'; $('#lb-pos').value = l.position || '';
+    $('#lb-score').value = l.score || ''; $('#lb-wod').value = l.wod_name || ''; $('#lb-desc').value = l.description || '';
+    if (l.athlete_profile_id) $('#lb-profile').value = l.athlete_profile_id;
+    $('#lb-pub').checked = l.is_published !== false;
+    let photoUrl = l.photo_url || '';
+    wireImageUpload('lb-img-file', 'lb-img-preview', 'lb-img-msg', 'site-media', 'leaderboard', (url) => { photoUrl = url; });
+    $('#lb-cancel').onclick = closeDrawer;
+    $('#z33-lb-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = {
+        athlete_name: $('#lb-name').value.trim(), category: $('#lb-cat').value.trim() || 'RX',
+        position: $('#lb-pos').value ? Number($('#lb-pos').value) : null, score: $('#lb-score').value.trim(),
+        wod_name: $('#lb-wod').value.trim() || null, description: $('#lb-desc').value.trim() || null,
+        athlete_profile_id: $('#lb-profile').value || null, photo_url: photoUrl || null,
+        is_published: $('#lb-pub').checked, updated_at: new Date().toISOString()
+      };
+      const r = id ? await db.from('leaderboard_entries').update(payload).eq('id', id) : await db.from('leaderboard_entries').insert(payload);
+      if (r.error) return alert(r.error.message);
+      closeDrawer(); await route('landing');
+    };
+  }
+
+  // ---- 9. Comunidad (tablas reales: announcements + landing_people) ----
+  // Avisos: se usa `announcements` — es la tabla que el landing público
+  // real consulta (confirmado con tráfico real en los logs de la API,
+  // sondeado cada ~60s desde el sitio). `community_posts` NO se usa: no
+  // tiene tráfico real del landing, dejaría al admin editando contenido
+  // que nunca se ve. Columnas reales de announcements: title, body,
+  // published_at, expires_at, is_active (no tiene columna `label`).
+  // Personas destacadas: landing_people, sin cambios. Ninguna exige
+  // perfiles de cliente duplicados: si la persona ya es cliente, el admin
+  // solo captura foto/resultado editorialmente, sin tocar profiles.
+  function landingCommunity(body) {
+    body.innerHTML = `
+      <div class="z33a-card">
+        <div class="z33a-toolbar"><span class="z33a-sub">Avisos (banner temporal del landing público)</span><button class="z33a-btn red" id="z33-new-post">+ Aviso</button></div>
+        <div class="z33a-table" style="margin-top:10px"><table><thead><tr><th>Título</th><th>Publicado</th><th>Expira</th><th>Estado</th><th></th></tr></thead><tbody>${state.announcements.map((p) => `<tr><td>${esc(p.title)}</td><td>${dateText((p.published_at || '').slice(0, 10))}</td><td>${dateText((p.expires_at || '').slice(0, 10))}</td><td><span class="z33a-pill ${p.is_active ? 'ok' : 'off'}">${p.is_active ? 'Activo' : 'Inactivo'}</span></td><td><button class="z33a-btn" data-post-edit="${p.id}">Editar</button> <button class="z33a-btn danger" data-post-del="${p.id}">Eliminar</button></td></tr>`).join('') || '<tr><td colspan="5" class="z33a-empty">Sin avisos.</td></tr>'}</tbody></table></div>
+      </div>
+      <div class="z33a-card" style="margin-top:16px">
+        <div class="z33a-toolbar"><span class="z33a-sub">Personas destacadas de la comunidad</span><button class="z33a-btn red" id="z33-new-person">+ Persona</button></div>
+        <div class="z33a-grid3" style="margin-top:10px">${state.landingPeople.map((p) => `<div class="z33a-card"><img src="${esc(p.photo_url || './assets/zona33-logo-portal.webp')}" alt="" style="width:56px;height:56px;border-radius:12px;object-fit:cover"><h3 style="margin:8px 0 0">${esc(p.name)}</h3><div class="z33a-muted">${esc(p.result || '')} · ${esc(p.category || '')}</div><div class="z33a-actions-row"><button class="z33a-btn" data-person-edit="${p.id}">Editar</button><button class="z33a-btn danger" data-person-del="${p.id}">Eliminar</button></div></div>`).join('') || '<div class="z33a-empty">Sin personas destacadas.</div>'}</div>
       </div>`;
-    const save = async (key, value) => { const r = await db.from('site_content').upsert({ key, value, is_public: true, updated_by: state.user.id, updated_at: new Date().toISOString() }, { onConflict: 'key' }); if (r.error) return alert(r.error.message); await route('landing'); };
-    $('#f-brand').onsubmit = (e) => { e.preventDefault(); save('brand', { logo_url: $('#ls-logo').value }); };
-    $('#f-hero').onsubmit = (e) => { e.preventDefault(); save('hero', { title: $('#ls-title').value, copy: $('#ls-copy').value }); };
-    $('#f-contact').onsubmit = (e) => { e.preventDefault(); save('contact', { phone: $('#ls-phone').value, instagram: $('#ls-ig').value, address: $('#ls-address').value }); };
-    $('#f-community').onsubmit = (e) => { e.preventDefault(); save('community', { title: $('#ls-ctitle').value, copy: $('#ls-ccopy').value }); };
+    $('#z33-new-post').onclick = () => communityPostForm();
+    $$('[data-post-edit]').forEach((b) => b.onclick = () => communityPostForm(b.dataset.postEdit));
+    $$('[data-post-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('¿Eliminar este aviso?')) return;
+      const r = await db.from('announcements').delete().eq('id', b.dataset.postDel);
+      if (r.error) return alert(r.error.message);
+      await route('landing');
+    });
+    $('#z33-new-person').onclick = () => landingPersonForm();
+    $$('[data-person-edit]').forEach((b) => b.onclick = () => landingPersonForm(b.dataset.personEdit));
+    $$('[data-person-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('¿Eliminar a esta persona destacada?')) return;
+      const r = await db.from('landing_people').delete().eq('id', b.dataset.personDel);
+      if (r.error) return alert(r.error.message);
+      await route('landing');
+    });
+  }
+  function communityPostForm(id) {
+    const p = id ? state.announcements.find((x) => x.id === id) : {};
+    openDrawer(id ? 'Editar aviso' : 'Nuevo aviso', `
+      <form id="z33-post-form" class="z33a-form">
+        <label>Título<input id="cp-title" required></label>
+        <label>Texto<textarea id="cp-body" required></textarea></label>
+        <div class="z33a-row"><label>Publicado<input id="cp-pub" type="datetime-local"></label><label>Expira<input id="cp-exp" type="datetime-local"></label></div>
+        <label class="z33a-check"><input id="cp-active" type="checkbox"> Activo</label>
+        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="cp-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
+      </form>`);
+    const toLocal = (v) => v ? new Date(v).toISOString().slice(0, 16) : '';
+    $('#cp-title').value = p.title || ''; $('#cp-body').value = p.body || '';
+    $('#cp-pub').value = toLocal(p.published_at) || new Date().toISOString().slice(0, 16);
+    $('#cp-exp').value = toLocal(p.expires_at) || new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 16);
+    $('#cp-active').checked = p.is_active !== false;
+    $('#cp-cancel').onclick = closeDrawer;
+    $('#z33-post-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = {
+        title: $('#cp-title').value.trim(), body: $('#cp-body').value.trim(),
+        published_at: new Date($('#cp-pub').value).toISOString(), expires_at: new Date($('#cp-exp').value).toISOString(),
+        is_active: $('#cp-active').checked, published_by: state.user.id
+      };
+      const r = id ? await db.from('announcements').update(payload).eq('id', id) : await db.from('announcements').insert(payload);
+      if (r.error) return alert(r.error.message);
+      closeDrawer(); await route('landing');
+    };
+  }
+  function landingPersonForm(id) {
+    const p = id ? state.landingPeople.find((x) => x.id === id) : {};
+    openDrawer(id ? 'Editar persona' : 'Nueva persona', `
+      <form id="z33-person-form" class="z33a-form">
+        <label>Foto${imagePickerHtml('lp-img-file', 'lp-img-preview', 'lp-img-msg', p.photo_url)}</label>
+        <label>Nombre<input id="lp-name" required></label>
+        <div class="z33a-row"><label>Resultado (ej. "-15kg", "1er lugar")<input id="lp-result"></label><label>Categoría<input id="lp-category"></label></div>
+        <div class="z33a-row"><label>WOD relacionado<input id="lp-wod"></label><label>Posición/orden<input id="lp-pos" type="number" min="1"></label></div>
+        <label>Descripción<textarea id="lp-desc"></textarea></label>
+        <label class="z33a-check"><input id="lp-pub" type="checkbox"> Publicado</label>
+        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="lp-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
+      </form>`);
+    $('#lp-name').value = p.name || ''; $('#lp-result').value = p.result || ''; $('#lp-category').value = p.category || '';
+    $('#lp-wod').value = p.wod_name || ''; $('#lp-pos').value = p.position || ''; $('#lp-desc').value = p.description || '';
+    $('#lp-pub').checked = p.is_published !== false;
+    let photoUrl = p.photo_url || '';
+    wireImageUpload('lp-img-file', 'lp-img-preview', 'lp-img-msg', 'site-media', 'community', (url) => { photoUrl = url; });
+    $('#lp-cancel').onclick = closeDrawer;
+    $('#z33-person-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const payload = {
+        name: $('#lp-name').value.trim(), result: $('#lp-result').value.trim() || null, category: $('#lp-category').value.trim() || null,
+        wod_name: $('#lp-wod').value.trim() || null, position: $('#lp-pos').value ? Number($('#lp-pos').value) : 1,
+        description: $('#lp-desc').value.trim() || null, photo_url: photoUrl || null, is_published: $('#lp-pub').checked, updated_at: new Date().toISOString()
+      };
+      const r = id ? await db.from('landing_people').update(payload).eq('id', id) : await db.from('landing_people').insert(payload);
+      if (r.error) return alert(r.error.message);
+      closeDrawer(); await route('landing');
+    };
+  }
+
+  // ---- 10. Instagram manual (tabla real: instagram_posts) ----
+  function landingInstagram(body) {
+    body.innerHTML = `<div class="z33a-toolbar"><span class="z33a-sub">Publicaciones de Instagram mostradas en el landing.</span><button class="z33a-btn red" id="z33-new-ig">+ Publicación</button></div>
+      <div class="z33a-grid3" style="margin-top:12px">${state.instagram.map((p) => `<div class="z33a-card"><img src="${esc(p.image_url)}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:10px;background:#f1f1f3"><p class="z33a-muted" style="min-height:32px">${esc(p.caption || '')}</p><div class="z33a-muted">${p.is_published ? 'Publicado' : 'Oculto'}</div><div class="z33a-actions-row"><button class="z33a-btn" data-ig-edit="${p.id}">Editar</button><button class="z33a-btn danger" data-ig-del="${p.id}">Eliminar</button></div></div>`).join('') || '<div class="z33a-empty">Sin publicaciones.</div>'}</div>`;
+    $('#z33-new-ig').onclick = () => instagramForm();
+    $$('[data-ig-edit]').forEach((b) => b.onclick = () => instagramForm(b.dataset.igEdit));
+    $$('[data-ig-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('¿Eliminar esta publicación de Instagram?')) return;
+      const r = await db.from('instagram_posts').delete().eq('id', b.dataset.igDel);
+      if (r.error) return alert(r.error.message);
+      await route('landing');
+    });
+  }
+  function instagramForm(id) {
+    const p = id ? state.instagram.find((x) => x.id === id) : {};
+    openDrawer(id ? 'Editar publicación' : 'Nueva publicación', `
+      <form id="z33-ig-form" class="z33a-form">
+        <label>Imagen${imagePickerHtml('ig-img-file', 'ig-img-preview', 'ig-img-msg', p.image_url)}</label>
+        <label>Caption<textarea id="ig-caption">${esc(p.caption || '')}</textarea></label>
+        <label>Enlace a Instagram<input id="ig-link" value="${esc(p.instagram_url || '')}"></label>
+        <label>Orden<input id="ig-order" type="number" min="0" value="${p.sort_order ?? 0}"></label>
+        <label class="z33a-check"><input id="ig-pub" type="checkbox"> Publicado</label>
+        <div id="ig-msg"></div>
+        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="ig-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
+      </form>`);
+    $('#ig-pub').checked = p.is_published !== false;
+    let imageUrl = p.image_url || '';
+    wireImageUpload('ig-img-file', 'ig-img-preview', 'ig-img-msg', 'site-media', 'instagram', (url) => { imageUrl = url; });
+    $('#ig-cancel').onclick = closeDrawer;
+    $('#z33-ig-form').onsubmit = async (e) => {
+      e.preventDefault();
+      if (!imageUrl) { $('#ig-msg').innerHTML = '<div class="z33a-msg err">Sube una imagen.</div>'; return; }
+      const payload = { image_url: imageUrl, caption: $('#ig-caption').value.trim() || null, instagram_url: $('#ig-link').value.trim() || null, sort_order: Number($('#ig-order').value || 0), is_published: $('#ig-pub').checked, updated_at: new Date().toISOString() };
+      const r = id ? await db.from('instagram_posts').update(payload).eq('id', id) : await db.from('instagram_posts').insert(payload);
+      if (r.error) return alert(r.error.message);
+      closeDrawer(); await route('landing');
+    };
+  }
+
+  // ---- 11. Galería (site_content.landing_gallery.images[] — ya existía) ----
+  function landingGallery(body) {
+    const images = (state.site.landing_gallery || {}).images || [];
+    body.innerHTML = `<div class="z33a-toolbar"><span class="z33a-sub">Galería de imágenes del landing.</span><label class="z33a-btn red" style="cursor:pointer">+ Subir imagen<input id="z33-gallery-file" type="file" accept="image/*" style="display:none"></label></div>
+      <div id="z33-gallery-msg" class="z33a-muted" style="margin-top:6px"></div>
+      <div class="z33a-grid3" style="margin-top:12px">${images.map((url, i) => `<div class="z33a-card"><img src="${esc(url)}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:10px"><div class="z33a-actions-row">
+        <button class="z33a-btn" data-gal-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="z33a-btn" data-gal-down="${i}" ${i === images.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="z33a-btn danger" data-gal-del="${i}">Eliminar</button>
+      </div></div>`).join('') || '<div class="z33a-empty">Sin imágenes todavía.</div>'}</div>`;
+    $('#z33-gallery-file').onchange = async (e) => {
+      const file = e.target.files && e.target.files[0]; if (!file) return;
+      const msg = $('#z33-gallery-msg');
+      if (!/^image\//.test(file.type)) { msg.innerHTML = '<div class="z33a-msg err">El archivo debe ser una imagen.</div>'; return; }
+      if (file.size > 8 * 1024 * 1024) { msg.innerHTML = '<div class="z33a-msg err">Máximo 8MB.</div>'; return; }
+      msg.textContent = 'Subiendo imagen…';
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      const path = `landing/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const up = await db.storage.from('site-media').upload(path, file, { upsert: true, contentType: file.type || 'image/jpeg' });
+      if (up.error) { msg.innerHTML = `<div class="z33a-msg err">${esc(up.error.message)}</div>`; return; }
+      const url = db.storage.from('site-media').getPublicUrl(path).data.publicUrl;
+      await siteSave('landing_gallery', { images: [...images, url] });
+    };
+    $$('[data-gal-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('¿Eliminar esta imagen de la galería?')) return;
+      await siteSave('landing_gallery', { images: images.filter((_, i) => i !== Number(b.dataset.galDel)) });
+    });
+    $$('[data-gal-up]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.galUp); const next = images.slice(); [next[i - 1], next[i]] = [next[i], next[i - 1]]; await siteSave('landing_gallery', { images: next }); });
+    $$('[data-gal-down]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.galDown); const next = images.slice(); [next[i + 1], next[i]] = [next[i], next[i + 1]]; await siteSave('landing_gallery', { images: next }); });
+  }
+
+  // ---- 12. Contacto ----
+  function landingContact(body) {
+    const c = state.site.contact || {};
+    body.innerHTML = `<div class="z33a-card" style="max-width:560px">
+      <h3 style="margin-top:0">Contacto</h3>
+      <form class="z33a-form" id="f-contact">
+        <div class="z33a-row"><label>Teléfono<input id="ct-phone" value="${esc(c.phone || '')}"></label><label>WhatsApp<input id="ct-whatsapp" value="${esc(c.whatsapp || '')}"></label></div>
+        <label>Correo<input id="ct-email" type="email" value="${esc(c.email || '')}"></label>
+        <label>Dirección<textarea id="ct-address">${esc(c.address || '')}</textarea></label>
+        <label>Horario<input id="ct-hours" value="${esc(c.hours || '')}"></label>
+        <label>Enlace de mapa (Google Maps)<input id="ct-map" value="${esc(c.map_url || '')}"></label>
+        <div class="z33a-actions-row"><button class="z33a-btn red">Guardar</button></div>
+      </form>
+    </div>`;
+    $('#f-contact').onsubmit = (e) => {
+      e.preventDefault();
+      siteSave('contact', { phone: $('#ct-phone').value.trim(), whatsapp: $('#ct-whatsapp').value.trim(), email: $('#ct-email').value.trim(), address: $('#ct-address').value.trim(), hours: $('#ct-hours').value.trim(), map_url: $('#ct-map').value.trim() });
+    };
+  }
+
+  // ---- 13. Redes sociales ----
+  function landingSocial(body) {
+    const b = state.site.brand || {};
+    body.innerHTML = `<div class="z33a-card" style="max-width:480px">
+      <h3 style="margin-top:0">Redes sociales</h3>
+      <form class="z33a-form" id="f-social">
+        <label>Instagram<input id="sc-ig" value="${esc(b.instagram || '')}" placeholder="@usuario"></label>
+        <label>Facebook<input id="sc-fb" value="${esc(b.facebook || '')}"></label>
+        <label>TikTok<input id="sc-tt" value="${esc(b.tiktok || '')}"></label>
+        <label>WhatsApp<input id="sc-wa" value="${esc(b.whatsapp || '')}"></label>
+        <div class="z33a-actions-row"><button class="z33a-btn red">Guardar</button></div>
+      </form>
+    </div>`;
+    $('#f-social').onsubmit = (e) => {
+      e.preventDefault();
+      siteSave('brand', { instagram: $('#sc-ig').value.trim(), facebook: $('#sc-fb').value.trim(), tiktok: $('#sc-tt').value.trim(), whatsapp: $('#sc-wa').value.trim() });
+    };
+  }
+
+  // ---- 14. Footer ----
+  function landingFooter(body) {
+    const f = state.site.footer || {};
+    body.innerHTML = `<div class="z33a-card" style="max-width:560px">
+      <h3 style="margin-top:0">Footer</h3>
+      <form class="z33a-form" id="f-footer">
+        <label>Texto<textarea id="ft-text">${esc(f.text || '')}</textarea></label>
+        <label>Copyright<input id="ft-copy" value="${esc(f.copyright || ('© ' + new Date().getFullYear() + ' ZONA 33 Functional Club'))}"></label>
+        <div class="z33a-actions-row"><button class="z33a-btn red">Guardar</button></div>
+      </form>
+    </div>`;
+    $('#f-footer').onsubmit = (e) => {
+      e.preventDefault();
+      siteSave('footer', { text: $('#ft-text').value.trim(), copyright: $('#ft-copy').value.trim() });
+    };
   }
 
   // =================================================================
