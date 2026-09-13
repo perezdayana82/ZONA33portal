@@ -132,7 +132,11 @@
       db.from('coaches').select('*').order('is_active', { ascending: false }).order('name'),
       db.from('classes').select('*').order('class_date', { ascending: false }).order('start_time'),
       db.from('reservations').select('*,profiles(full_name,email,phone)').order('created_at', { ascending: false }),
-      db.from('payments').select('*,profiles(full_name,email),membership_plans(name,is_founder_plan)').order('payment_date', { ascending: false }),
+      // profiles!profile_id — payments tiene DOS FKs a profiles (profile_id
+      // y reviewed_by); sin el hint, PostgREST no puede resolver el embed
+      // "profiles(...)" (ambiguo) y devuelve error, dejando state.payments
+      // vacío en cada carga aunque el pago sí exista en la tabla.
+      db.from('payments').select('*,profiles!profile_id(full_name,email),membership_plans(name,is_founder_plan)').order('payment_date', { ascending: false }),
       db.from('memberships').select('*,profiles(full_name,email),membership_plans(name,price,is_founder_plan,duration_days)').order('created_at', { ascending: false }),
       db.from('membership_plans').select('*').order('sort_order').order('name'),
       db.from('founder_codes').select('*').order('created_at', { ascending: false }),
