@@ -1542,13 +1542,31 @@
   // ---- 11. Galería (site_content.landing_gallery.images[] — ya existía) ----
   function landingGallery(body) {
     const images = (state.site.landing_gallery || {}).images || [];
-    body.innerHTML = `<div class="z33a-toolbar"><span class="z33a-sub">Galería de imágenes del landing.</span><label class="z33a-btn red" style="cursor:pointer">+ Subir imagen<input id="z33-gallery-file" type="file" accept="image/*" style="display:none"></label></div>
-      <div id="z33-gallery-msg" class="z33a-muted" style="margin-top:6px"></div>
-      <div class="z33a-grid3" style="margin-top:12px">${images.map((url, i) => `<div class="z33a-card"><img src="${esc(url)}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:10px"><div class="z33a-actions-row">
-        <button class="z33a-btn" data-gal-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
-        <button class="z33a-btn" data-gal-down="${i}" ${i === images.length - 1 ? 'disabled' : ''}>↓</button>
-        <button class="z33a-btn danger" data-gal-del="${i}">Eliminar</button>
-      </div></div>`).join('') || '<div class="z33a-empty">Sin imágenes todavía.</div>'}</div>`;
+    const photos = (state.site.landing_photos || {}).items || [];
+    body.innerHTML = `
+      <div class="z33a-card">
+        <div class="z33a-toolbar"><span class="z33a-sub">Galería de imágenes del landing.</span><label class="z33a-btn red" style="cursor:pointer">+ Subir imagen<input id="z33-gallery-file" type="file" accept="image/*" style="display:none"></label></div>
+        <div id="z33-gallery-msg" class="z33a-muted" style="margin-top:6px"></div>
+        <div class="z33a-grid3" style="margin-top:12px">${images.map((url, i) => `<div class="z33a-card"><img src="${esc(url)}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:10px"><div class="z33a-actions-row">
+          <button class="z33a-btn" data-gal-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button class="z33a-btn" data-gal-down="${i}" ${i === images.length - 1 ? 'disabled' : ''}>↓</button>
+          <button class="z33a-btn danger" data-gal-del="${i}">Eliminar</button>
+        </div></div>`).join('') || '<div class="z33a-empty">Sin imágenes todavía.</div>'}</div>
+      </div>
+      <div class="z33a-card" style="margin-top:16px">
+        <div class="z33a-toolbar"><span class="z33a-sub">Fotos con texto (bloques de la sección de fotografías del landing — imagen + frase superpuesta, ej. "Después del WOD")</span><button class="z33a-btn red" id="z33-new-photo">+ Foto</button></div>
+        <div class="z33a-grid3" style="margin-top:12px">${photos.map((p, i) => `<div class="z33a-card">
+          <img src="${esc(p.image_url || './assets/zona33-logo-portal.webp')}" alt="" style="width:100%;height:110px;object-fit:cover;border-radius:10px;background:#f1f1f3">
+          <h3 style="margin:10px 0 2px">${esc(p.caption || '')}</h3>
+          <div class="z33a-muted">${p.is_active === false ? 'Inactivo' : 'Activo'}</div>
+          <div class="z33a-actions-row">
+            <button class="z33a-btn" data-photo-edit="${i}">Editar</button>
+            <button class="z33a-btn" data-photo-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
+            <button class="z33a-btn" data-photo-down="${i}" ${i === photos.length - 1 ? 'disabled' : ''}>↓</button>
+            <button class="z33a-btn danger" data-photo-del="${i}">Eliminar</button>
+          </div>
+        </div>`).join('') || '<div class="z33a-empty">Sin fotos con texto todavía.</div>'}</div>
+      </div>`;
     $('#z33-gallery-file').onchange = async (e) => {
       const file = e.target.files && e.target.files[0]; if (!file) return;
       const msg = $('#z33-gallery-msg');
@@ -1568,6 +1586,43 @@
     });
     $$('[data-gal-up]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.galUp); const next = images.slice(); [next[i - 1], next[i]] = [next[i], next[i - 1]]; await siteSave('landing_gallery', { images: next }); });
     $$('[data-gal-down]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.galDown); const next = images.slice(); [next[i + 1], next[i]] = [next[i], next[i + 1]]; await siteSave('landing_gallery', { images: next }); });
+    $('#z33-new-photo').onclick = () => landingPhotoForm(photos, -1);
+    $$('[data-photo-edit]').forEach((b) => b.onclick = () => landingPhotoForm(photos, Number(b.dataset.photoEdit)));
+    $$('[data-photo-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('¿Eliminar esta foto?')) return;
+      await siteSave('landing_photos', { items: photos.filter((_, i) => i !== Number(b.dataset.photoDel)) });
+    });
+    $$('[data-photo-up]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.photoUp); const next = photos.slice(); [next[i - 1], next[i]] = [next[i], next[i - 1]]; await siteSave('landing_photos', { items: next }); });
+    $$('[data-photo-down]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.photoDown); const next = photos.slice(); [next[i + 1], next[i]] = [next[i], next[i + 1]]; await siteSave('landing_photos', { items: next }); });
+  }
+  // "Fotos con texto": bloques imagen+caption de la sección de fotografías
+  // del landing (antes hardcodeados en el HTML del collage). Un solo campo
+  // nuevo — site_content.landing_photos.items[] — con el mismo patrón ya
+  // usado en Servicios (imagen + texto + activo/inactivo + orden por
+  // posición en el arreglo). No reutiliza landing_gallery.images porque esa
+  // key es un pool genérico sin caption/activo, compartido con otra sección
+  // (transformaciones) — mezclarlas habría alterado la Galería existente.
+  function landingPhotoForm(items, index) {
+    const it = index >= 0 ? items[index] : {};
+    openDrawer(index >= 0 ? 'Editar foto' : 'Nueva foto', `
+      <form id="z33-photo-form" class="z33a-form">
+        <label>Imagen${imagePickerHtml('ph-img-file', 'ph-img-preview', 'ph-img-msg', it.image_url)}</label>
+        <label>Texto sobre la imagen<input id="ph-caption" value="${esc(it.caption || '')}" required></label>
+        <label class="z33a-check"><input id="ph-active" type="checkbox" ${it.is_active === false ? '' : 'checked'}> Activo</label>
+        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="ph-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
+      </form>`);
+    let imageUrl = it.image_url || '';
+    wireImageUpload('ph-img-file', 'ph-img-preview', 'ph-img-msg', 'site-media', 'photos', (url) => { imageUrl = url; });
+    $('#ph-cancel').onclick = closeDrawer;
+    $('#z33-photo-form').onsubmit = async (e) => {
+      e.preventDefault();
+      if (!imageUrl) { alert('Sube una imagen.'); return; }
+      const entry = { image_url: imageUrl, caption: $('#ph-caption').value.trim(), is_active: $('#ph-active').checked };
+      const next = items.slice();
+      if (index >= 0) next[index] = { ...it, ...entry }; else next.push(entry);
+      closeDrawer();
+      await siteSave('landing_photos', { items: next });
+    };
   }
 
   // ---- 12. Contacto ----
