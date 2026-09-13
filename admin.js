@@ -183,7 +183,7 @@
   // ---------------------------------------------------------------
   // Layout raíz + router
   // ---------------------------------------------------------------
-  const NAV_ITEMS = [['dashboard', 'Dashboard'], ['clients', 'Clientes'], ['agenda', 'Clases / Horarios'], ['coaches', 'Coaches'], ['finance', 'Finanzas'], ['landing', 'Editar Landing']];
+  const NAV_ITEMS = [['dashboard', 'Dashboard'], ['clients', 'Clientes'], ['agenda', 'Clases / Horarios'], ['coaches', 'Coaches'], ['finance', 'Finanzas'], ['landing', 'Editar Landing'], ['account', 'Mi cuenta']];
   const PAGE_TITLES = Object.fromEntries(NAV_ITEMS);
 
   function renderRoot() {
@@ -208,7 +208,7 @@
     state.page = page;
     setTitle(PAGE_TITLES[page] || 'Dashboard');
     await loadData();
-    ({ dashboard, clients, agenda, coaches, finance, landing }[page] || dashboard)();
+    ({ dashboard, clients, agenda, coaches, finance, landing, account }[page] || dashboard)();
     const menu = $('#z33-menu');
     if (menu) { menu.querySelector('.z33a-menu-list').innerHTML = menuItems(); bindMenu(); }
   }
@@ -1142,7 +1142,7 @@
   const LANDING_TABS = [
     ['general', 'General / Marca'], ['hero', 'Hero'], ['services', 'Servicios'], ['schedule', 'Horarios'],
     ['coachesref', 'Coaches'], ['plansref', 'Planes'], ['wod', 'WOD'], ['leaderboard', 'Leaderboard'],
-    ['community', 'Comunidad'], ['instagram', 'Instagram'], ['gallery', 'Galería'], ['contact', 'Contacto'],
+    ['community', 'Comunidad'], ['instagram', 'Instagram'], ['gallery', 'Fotos'], ['contact', 'Contacto'],
     ['social', 'Redes'], ['footer', 'Footer']
   ];
   // "Vista previa" NO es un preview embebido: este repositorio no contiene
@@ -1539,25 +1539,36 @@
     };
   }
 
-  // ---- 11. Galería (site_content.landing_gallery.images[] — ya existía) ----
-  function landingGallery(body) {
-    const images = (state.site.landing_gallery || {}).images || [];
-    const photos = (state.site.landing_photos || {}).items || [];
+  // ---- 11. Fotos del landing — UNA sola sección (site_content.landing_photos.items[]) ----
+  // Antes había dos sistemas para lo mismo: landing_gallery.images[] (solo
+  // URLs, sin texto/activo/orden) y landing_photos.items[] ("Fotos con
+  // texto": imagen + frase superpuesta + activo + orden). Se unifican en
+  // uno solo — landing_photos es ahora la ÚNICA fuente para esta sección;
+  // no se crea ninguna tabla ni key nueva, se reutiliza la que ya existía.
+  // Si quedaban imágenes en landing_gallery de antes de esta unificación,
+  // se migran una sola vez (como foto sin texto, activa) para no perderlas
+  // — nunca se borran fotos por unificar la interfaz — y landing_gallery
+  // queda vacío para que la migración no se repita en la próxima visita.
+  async function landingGallery(body) {
+    let photos = (state.site.landing_photos || {}).items || [];
+    const oldImages = (state.site.landing_gallery || {}).images || [];
+    if (oldImages.length) {
+      const existingUrls = new Set(photos.map((p) => p.image_url));
+      const migrated = oldImages.filter((url) => !existingUrls.has(url)).map((url) => ({ image_url: url, caption: '', is_active: true }));
+      if (migrated.length) photos = [...photos, ...migrated];
+      const now = new Date().toISOString();
+      const r = await db.from('site_content').upsert([
+        { key: 'landing_photos', value: { items: photos }, is_public: true, updated_by: state.user.id, updated_at: now },
+        { key: 'landing_gallery', value: { images: [] }, is_public: true, updated_by: state.user.id, updated_at: now }
+      ], { onConflict: 'key' });
+      if (!r.error) { await route('landing'); return; }
+    }
     body.innerHTML = `
       <div class="z33a-card">
-        <div class="z33a-toolbar"><span class="z33a-sub">Galería de imágenes del landing.</span><label class="z33a-btn red" style="cursor:pointer">+ Subir imagen<input id="z33-gallery-file" type="file" accept="image/*" style="display:none"></label></div>
-        <div id="z33-gallery-msg" class="z33a-muted" style="margin-top:6px"></div>
-        <div class="z33a-grid3" style="margin-top:12px">${images.map((url, i) => `<div class="z33a-card"><img src="${esc(url)}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:10px"><div class="z33a-actions-row">
-          <button class="z33a-btn" data-gal-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
-          <button class="z33a-btn" data-gal-down="${i}" ${i === images.length - 1 ? 'disabled' : ''}>↓</button>
-          <button class="z33a-btn danger" data-gal-del="${i}">Eliminar</button>
-        </div></div>`).join('') || '<div class="z33a-empty">Sin imágenes todavía.</div>'}</div>
-      </div>
-      <div class="z33a-card" style="margin-top:16px">
-        <div class="z33a-toolbar"><span class="z33a-sub">Fotos con texto (bloques de la sección de fotografías del landing — imagen + frase superpuesta, ej. "Después del WOD")</span><button class="z33a-btn red" id="z33-new-photo">+ Foto</button></div>
+        <div class="z33a-toolbar"><span class="z33a-sub">Fotos del landing (imagen + frase superpuesta, ej. "Después del WOD")</span><button class="z33a-btn red" id="z33-new-photo">+ Foto</button></div>
         <div class="z33a-grid3" style="margin-top:12px">${photos.map((p, i) => `<div class="z33a-card">
           <img src="${esc(p.image_url || './assets/zona33-logo-portal.webp')}" alt="" style="width:100%;height:110px;object-fit:cover;border-radius:10px;background:#f1f1f3">
-          <h3 style="margin:10px 0 2px">${esc(p.caption || '')}</h3>
+          <h3 style="margin:10px 0 2px">${esc(p.caption || '(sin texto)')}</h3>
           <div class="z33a-muted">${p.is_active === false ? 'Inactivo' : 'Activo'}</div>
           <div class="z33a-actions-row">
             <button class="z33a-btn" data-photo-edit="${i}">Editar</button>
@@ -1565,27 +1576,8 @@
             <button class="z33a-btn" data-photo-down="${i}" ${i === photos.length - 1 ? 'disabled' : ''}>↓</button>
             <button class="z33a-btn danger" data-photo-del="${i}">Eliminar</button>
           </div>
-        </div>`).join('') || '<div class="z33a-empty">Sin fotos con texto todavía.</div>'}</div>
+        </div>`).join('') || '<div class="z33a-empty">Sin fotos todavía.</div>'}</div>
       </div>`;
-    $('#z33-gallery-file').onchange = async (e) => {
-      const file = e.target.files && e.target.files[0]; if (!file) return;
-      const msg = $('#z33-gallery-msg');
-      if (!/^image\//.test(file.type)) { msg.innerHTML = '<div class="z33a-msg err">El archivo debe ser una imagen.</div>'; return; }
-      if (file.size > 8 * 1024 * 1024) { msg.innerHTML = '<div class="z33a-msg err">Máximo 8MB.</div>'; return; }
-      msg.textContent = 'Subiendo imagen…';
-      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-      const path = `landing/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-      const up = await db.storage.from('site-media').upload(path, file, { upsert: true, contentType: file.type || 'image/jpeg' });
-      if (up.error) { msg.innerHTML = `<div class="z33a-msg err">${esc(up.error.message)}</div>`; return; }
-      const url = db.storage.from('site-media').getPublicUrl(path).data.publicUrl;
-      await siteSave('landing_gallery', { images: [...images, url] });
-    };
-    $$('[data-gal-del]').forEach((b) => b.onclick = async () => {
-      if (!confirm('¿Eliminar esta imagen de la galería?')) return;
-      await siteSave('landing_gallery', { images: images.filter((_, i) => i !== Number(b.dataset.galDel)) });
-    });
-    $$('[data-gal-up]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.galUp); const next = images.slice(); [next[i - 1], next[i]] = [next[i], next[i - 1]]; await siteSave('landing_gallery', { images: next }); });
-    $$('[data-gal-down]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.galDown); const next = images.slice(); [next[i + 1], next[i]] = [next[i], next[i + 1]]; await siteSave('landing_gallery', { images: next }); });
     $('#z33-new-photo').onclick = () => landingPhotoForm(photos, -1);
     $$('[data-photo-edit]').forEach((b) => b.onclick = () => landingPhotoForm(photos, Number(b.dataset.photoEdit)));
     $$('[data-photo-del]').forEach((b) => b.onclick = async () => {
@@ -1595,19 +1587,16 @@
     $$('[data-photo-up]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.photoUp); const next = photos.slice(); [next[i - 1], next[i]] = [next[i], next[i - 1]]; await siteSave('landing_photos', { items: next }); });
     $$('[data-photo-down]').forEach((b) => b.onclick = async () => { const i = Number(b.dataset.photoDown); const next = photos.slice(); [next[i + 1], next[i]] = [next[i], next[i + 1]]; await siteSave('landing_photos', { items: next }); });
   }
-  // "Fotos con texto": bloques imagen+caption de la sección de fotografías
-  // del landing (antes hardcodeados en el HTML del collage). Un solo campo
-  // nuevo — site_content.landing_photos.items[] — con el mismo patrón ya
-  // usado en Servicios (imagen + texto + activo/inactivo + orden por
-  // posición en el arreglo). No reutiliza landing_gallery.images porque esa
-  // key es un pool genérico sin caption/activo, compartido con otra sección
-  // (transformaciones) — mezclarlas habría alterado la Galería existente.
+  // Formulario de una foto (imagen + texto + activo) — mismo patrón que
+  // Servicios (imagen + texto + activo/inactivo + orden por posición en el
+  // arreglo). El texto es opcional: las fotos migradas desde la antigua
+  // Galería no traían frase, y debe seguir siendo válido dejarlas así.
   function landingPhotoForm(items, index) {
     const it = index >= 0 ? items[index] : {};
     openDrawer(index >= 0 ? 'Editar foto' : 'Nueva foto', `
       <form id="z33-photo-form" class="z33a-form">
         <label>Imagen${imagePickerHtml('ph-img-file', 'ph-img-preview', 'ph-img-msg', it.image_url)}</label>
-        <label>Texto sobre la imagen<input id="ph-caption" value="${esc(it.caption || '')}" required></label>
+        <label>Texto sobre la imagen <span class="z33a-muted">(opcional)</span><input id="ph-caption" value="${esc(it.caption || '')}"></label>
         <label class="z33a-check"><input id="ph-active" type="checkbox" ${it.is_active === false ? '' : 'checked'}> Activo</label>
         <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="ph-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
       </form>`);
@@ -1678,6 +1667,69 @@
     $('#f-footer').onsubmit = (e) => {
       e.preventDefault();
       siteSave('footer', { text: $('#ft-text').value.trim(), copyright: $('#ft-copy').value.trim() });
+    };
+  }
+
+  // =================================================================
+  // MI CUENTA — el administrador autenticado edita su propio nombre,
+  // correo y contraseña. Usa exclusivamente el sistema de autenticación
+  // existente (Supabase Auth vía `db`, el mismo cliente de toda la app):
+  // sin contraseñas paralelas, sin roles/permisos nuevos, sin usuarios
+  // múltiples. `state.user.id` es siempre el id de la sesión activa, así
+  // que esto solo puede tocar la propia cuenta del admin logueado — nunca
+  // la de otro usuario (eso ya existe aparte, en Clientes → Editar).
+  // =================================================================
+  function account() {
+    const p = state.profile || {};
+    $('#z33-content').innerHTML = `${pageShell('Mi cuenta', 'Configuración de tu cuenta de administrador.')}
+      <div class="z33a-card" style="max-width:480px">
+        <form class="z33a-form" id="z33-account-form">
+          <label>Nombre<input id="ac-name" value="${esc(p.full_name || '')}" required></label>
+          <label>Correo<input id="ac-email" type="email" value="${esc(state.user.email || p.email || '')}" required></label>
+          <label>Nueva contraseña <span class="z33a-muted">(déjalo vacío para no cambiarla)</span><input id="ac-pass" type="password" minlength="8" autocomplete="new-password"></label>
+          <label>Confirmar contraseña<input id="ac-pass2" type="password" minlength="8" autocomplete="new-password"></label>
+          <div id="ac-msg"></div>
+          <div class="z33a-actions-row"><button class="z33a-btn red">Guardar cambios</button></div>
+        </form>
+      </div>`;
+    $('#z33-account-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const msg = $('#ac-msg'); msg.innerHTML = '';
+      const name = $('#ac-name').value.trim();
+      const email = $('#ac-email').value.trim().toLowerCase();
+      const pass = $('#ac-pass').value, pass2 = $('#ac-pass2').value;
+      if (!name || !email) { msg.innerHTML = '<div class="z33a-msg err">Completa nombre y correo.</div>'; return; }
+      if (pass || pass2) {
+        if (pass.length < 8) { msg.innerHTML = '<div class="z33a-msg err">La nueva contraseña debe tener al menos 8 caracteres.</div>'; return; }
+        if (pass !== pass2) { msg.innerHTML = '<div class="z33a-msg err">Las contraseñas no coinciden.</div>'; return; }
+      }
+      const notes = [];
+      // 1) Nombre — misma tabla `profiles` y mismo patrón de actualización
+      // que ya usa el resto del admin (ej. Editar cliente).
+      if (name !== (p.full_name || '')) {
+        const r = await db.from('profiles').update({ full_name: name, updated_at: new Date().toISOString() }).eq('id', state.user.id).select().single();
+        if (r.error) { msg.innerHTML = `<div class="z33a-msg err">${esc(r.error.message)}</div>`; return; }
+        state.profile = r.data;
+        notes.push('Nombre actualizado.');
+      }
+      // 2) Correo — flujo seguro de Supabase Auth: envía verificación y el
+      // correo de acceso solo cambia una vez confirmado (no se asume el
+      // cambio de inmediato).
+      if (email !== (state.user.email || '')) {
+        const r = await db.auth.updateUser({ email });
+        if (r.error) { msg.innerHTML = `<div class="z33a-msg err">${esc(r.error.message)}</div>`; return; }
+        notes.push('Te enviamos un correo de confirmación a la nueva dirección — tu correo de acceso cambiará hasta que lo confirmes.');
+      }
+      // 3) Contraseña — mecanismo seguro ya disponible en Supabase Auth;
+      // nunca se guarda ni se muestra en texto plano, y la sesión activa
+      // se mantiene (Supabase no la cierra al cambiarla).
+      if (pass) {
+        const r = await db.auth.updateUser({ password: pass });
+        if (r.error) { msg.innerHTML = `<div class="z33a-msg err">${esc(r.error.message)}</div>`; return; }
+        notes.push('Contraseña actualizada.');
+      }
+      $('#ac-pass').value = ''; $('#ac-pass2').value = '';
+      msg.innerHTML = `<div class="z33a-msg ok">${esc(notes.length ? notes.join(' ') : 'Sin cambios.')}</div>`;
     };
   }
 
