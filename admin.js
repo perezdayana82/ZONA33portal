@@ -52,7 +52,7 @@
     weekAnchor: weekMonday(today()), agendaView: 'week', dayAnchor: today(), landingTab: 'general',
     clients: [], coaches: [], classes: [], reservations: [], payments: [], memberships: [],
     plans: [], founders: [], expenses: [], site: {}, masterOptions: [],
-    wods: [], leaderboard: [], community: [], instagram: [], landingPeople: []
+    wods: [], leaderboard: [], announcements: [], instagram: [], landingPeople: []
   };
 
   // ---------------------------------------------------------------
@@ -128,7 +128,7 @@
   // Carga de datos — una sola vez por navegación, todo desde Supabase
   // ---------------------------------------------------------------
   async function loadData() {
-    const [clients, coaches, classes, reservations, payments, memberships, plans, founders, expenses, site, masterOptions, wods, leaderboard, community, instagram, landingPeople] = await Promise.all([
+    const [clients, coaches, classes, reservations, payments, memberships, plans, founders, expenses, site, masterOptions, wods, leaderboard, announcements, instagram, landingPeople] = await Promise.all([
       db.from('profiles').select('*').eq('role', 'cliente').order('created_at', { ascending: false }),
       db.from('coaches').select('*').order('is_active', { ascending: false }).order('name'),
       db.from('classes').select('*').order('class_date', { ascending: false }).order('start_time'),
@@ -148,7 +148,10 @@
       // (confirmado en logs reales de producción), una sola fuente de verdad.
       db.from('wods').select('*').order('wod_date', { ascending: false }),
       db.from('leaderboard_entries').select('*').order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }),
-      db.from('community_posts').select('*').order('published_at', { ascending: false }),
+      // Comunidad → avisos: se usa `announcements` (confirmado con tráfico
+      // real del landing público en edge_logs), NO `community_posts` (tabla
+      // sin uso real, dejaría al admin editando contenido que nunca aparece).
+      db.from('announcements').select('*').order('published_at', { ascending: false }),
       db.from('instagram_posts').select('*').order('sort_order').order('created_at', { ascending: false }),
       db.from('landing_people').select('*').order('position').order('created_at', { ascending: false })
     ]);
@@ -165,7 +168,7 @@
     state.masterOptions = masterOptions.data || [];
     state.wods = wods.data || [];
     state.leaderboard = leaderboard.data || [];
-    state.community = community.data || [];
+    state.announcements = announcements.data || [];
     state.instagram = instagram.data || [];
     state.landingPeople = landingPeople.data || [];
   }
@@ -1090,7 +1093,7 @@
   // =================================================================
   // LANDING / CONTENIDO — CMS completo. Una sola fuente de verdad:
   // el contenido editorial vive en site_content (JSON por key) y en las
-  // tablas reales del landing (wods, leaderboard_entries, community_posts,
+  // tablas reales del landing (wods, leaderboard_entries, announcements,
   // instagram_posts, landing_people). Horarios/Coaches/Planes NO se
   // duplican aquí: son vistas de solo lectura de classes/coaches/
   // membership_plans con un botón al módulo real correspondiente.
@@ -1401,17 +1404,21 @@
     };
   }
 
-  // ---- 9. Comunidad (tablas reales: community_posts + landing_people) ----
-  // "Personas/publicaciones reales de comunidad": community_posts son
-  // publicaciones (avisos temporales); landing_people son las personas
-  // destacadas que el landing muestra (foto/resultado/categoría). Ninguna
-  // exige perfiles de cliente duplicados: si la persona ya es cliente, el
-  // admin solo captura foto/resultado editorialmente, sin tocar profiles.
+  // ---- 9. Comunidad (tablas reales: announcements + landing_people) ----
+  // Avisos: se usa `announcements` — es la tabla que el landing público
+  // real consulta (confirmado con tráfico real en los logs de la API,
+  // sondeado cada ~60s desde el sitio). `community_posts` NO se usa: no
+  // tiene tráfico real del landing, dejaría al admin editando contenido
+  // que nunca se ve. Columnas reales de announcements: title, body,
+  // published_at, expires_at, is_active (no tiene columna `label`).
+  // Personas destacadas: landing_people, sin cambios. Ninguna exige
+  // perfiles de cliente duplicados: si la persona ya es cliente, el admin
+  // solo captura foto/resultado editorialmente, sin tocar profiles.
   function landingCommunity(body) {
     body.innerHTML = `
       <div class="z33a-card">
-        <div class="z33a-toolbar"><span class="z33a-sub">Publicaciones (avisos temporales del landing)</span><button class="z33a-btn red" id="z33-new-post">+ Publicación</button></div>
-        <div class="z33a-table" style="margin-top:10px"><table><thead><tr><th>Título</th><th>Publicado</th><th>Expira</th><th>Estado</th><th></th></tr></thead><tbody>${state.community.map((p) => `<tr><td>${esc(p.title)}</td><td>${dateText((p.published_at || '').slice(0, 10))}</td><td>${dateText((p.expires_at || '').slice(0, 10))}</td><td><span class="z33a-pill ${p.is_active ? 'ok' : 'off'}">${p.is_active ? 'Activo' : 'Inactivo'}</span></td><td><button class="z33a-btn" data-post-edit="${p.id}">Editar</button> <button class="z33a-btn danger" data-post-del="${p.id}">Eliminar</button></td></tr>`).join('') || '<tr><td colspan="5" class="z33a-empty">Sin publicaciones.</td></tr>'}</tbody></table></div>
+        <div class="z33a-toolbar"><span class="z33a-sub">Avisos (banner temporal del landing público)</span><button class="z33a-btn red" id="z33-new-post">+ Aviso</button></div>
+        <div class="z33a-table" style="margin-top:10px"><table><thead><tr><th>Título</th><th>Publicado</th><th>Expira</th><th>Estado</th><th></th></tr></thead><tbody>${state.announcements.map((p) => `<tr><td>${esc(p.title)}</td><td>${dateText((p.published_at || '').slice(0, 10))}</td><td>${dateText((p.expires_at || '').slice(0, 10))}</td><td><span class="z33a-pill ${p.is_active ? 'ok' : 'off'}">${p.is_active ? 'Activo' : 'Inactivo'}</span></td><td><button class="z33a-btn" data-post-edit="${p.id}">Editar</button> <button class="z33a-btn danger" data-post-del="${p.id}">Eliminar</button></td></tr>`).join('') || '<tr><td colspan="5" class="z33a-empty">Sin avisos.</td></tr>'}</tbody></table></div>
       </div>
       <div class="z33a-card" style="margin-top:16px">
         <div class="z33a-toolbar"><span class="z33a-sub">Personas destacadas de la comunidad</span><button class="z33a-btn red" id="z33-new-person">+ Persona</button></div>
@@ -1420,8 +1427,8 @@
     $('#z33-new-post').onclick = () => communityPostForm();
     $$('[data-post-edit]').forEach((b) => b.onclick = () => communityPostForm(b.dataset.postEdit));
     $$('[data-post-del]').forEach((b) => b.onclick = async () => {
-      if (!confirm('¿Eliminar esta publicación?')) return;
-      const r = await db.from('community_posts').delete().eq('id', b.dataset.postDel);
+      if (!confirm('¿Eliminar este aviso?')) return;
+      const r = await db.from('announcements').delete().eq('id', b.dataset.postDel);
       if (r.error) return alert(r.error.message);
       await route('landing');
     });
@@ -1435,18 +1442,17 @@
     });
   }
   function communityPostForm(id) {
-    const p = id ? state.community.find((x) => x.id === id) : {};
-    openDrawer(id ? 'Editar publicación' : 'Nueva publicación', `
+    const p = id ? state.announcements.find((x) => x.id === id) : {};
+    openDrawer(id ? 'Editar aviso' : 'Nuevo aviso', `
       <form id="z33-post-form" class="z33a-form">
         <label>Título<input id="cp-title" required></label>
         <label>Texto<textarea id="cp-body" required></textarea></label>
-        <label>Etiqueta (opcional)<input id="cp-label"></label>
         <div class="z33a-row"><label>Publicado<input id="cp-pub" type="datetime-local"></label><label>Expira<input id="cp-exp" type="datetime-local"></label></div>
         <label class="z33a-check"><input id="cp-active" type="checkbox"> Activo</label>
         <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="cp-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
       </form>`);
     const toLocal = (v) => v ? new Date(v).toISOString().slice(0, 16) : '';
-    $('#cp-title').value = p.title || ''; $('#cp-body').value = p.body || ''; $('#cp-label').value = p.label || '';
+    $('#cp-title').value = p.title || ''; $('#cp-body').value = p.body || '';
     $('#cp-pub').value = toLocal(p.published_at) || new Date().toISOString().slice(0, 16);
     $('#cp-exp').value = toLocal(p.expires_at) || new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 16);
     $('#cp-active').checked = p.is_active !== false;
@@ -1454,11 +1460,11 @@
     $('#z33-post-form').onsubmit = async (e) => {
       e.preventDefault();
       const payload = {
-        title: $('#cp-title').value.trim(), body: $('#cp-body').value.trim(), label: $('#cp-label').value.trim() || null,
+        title: $('#cp-title').value.trim(), body: $('#cp-body').value.trim(),
         published_at: new Date($('#cp-pub').value).toISOString(), expires_at: new Date($('#cp-exp').value).toISOString(),
         is_active: $('#cp-active').checked, published_by: state.user.id
       };
-      const r = id ? await db.from('community_posts').update(payload).eq('id', id) : await db.from('community_posts').insert(payload);
+      const r = id ? await db.from('announcements').update(payload).eq('id', id) : await db.from('announcements').insert(payload);
       if (r.error) return alert(r.error.message);
       closeDrawer(); await route('landing');
     };
