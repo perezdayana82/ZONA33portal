@@ -429,21 +429,47 @@
   }
   function coachForm(id) {
     const c = id ? state.coaches.find((x) => x.id === id) : {};
+    // photoUrl vive en un closure (no en un <input>): se sube el archivo a
+    // Storage al elegirlo y solo se guarda la URL resultante en `coaches`.
+    // Nunca hay un campo de URL manual.
+    let photoUrl = c.photo_url || null;
     openDrawer(id ? 'Editar coach' : 'Nuevo coach', `
       <form id="z33-coach-form" class="z33a-form">
         <label>Nombre<input id="co-name" required></label>
         <label>Especialidad<input id="co-specialty"></label>
-        <label>Foto URL<input id="co-photo"></label>
+        <label>Foto
+          <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+            <img id="co-photo-preview" src="${esc(photoUrl || './assets/zona33-logo-portal.webp')}" alt="" style="width:72px;height:72px;border-radius:12px;object-fit:cover;background:#f1f1f3;flex:none">
+            <div style="flex:1;min-width:0">
+              <input id="co-photo-file" type="file" accept="image/*">
+              <div id="co-photo-msg" class="z33a-muted" style="margin-top:4px"></div>
+            </div>
+          </div>
+        </label>
         <label>Bio<textarea id="co-bio"></textarea></label>
-        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="co-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
+        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="co-cancel">Cancelar</button><button class="z33a-btn red" id="co-save">Guardar</button></div>
       </form>`);
-    $('#co-name').value = c.name || ''; $('#co-specialty').value = c.specialty || ''; $('#co-photo').value = c.photo_url || ''; $('#co-bio').value = c.bio || '';
+    $('#co-name').value = c.name || ''; $('#co-specialty').value = c.specialty || ''; $('#co-bio').value = c.bio || '';
     $('#co-cancel').onclick = closeDrawer;
+    $('#co-photo-file').onchange = async (e) => {
+      const file = e.target.files && e.target.files[0]; if (!file) return;
+      const preview = $('#co-photo-preview'), msg = $('#co-photo-msg'), saveBtn = $('#co-save');
+      preview.src = URL.createObjectURL(file); // preview inmediato, antes de terminar la subida
+      msg.textContent = 'Subiendo foto…'; saveBtn.disabled = true;
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      const path = `${id || 'new'}/${Date.now()}.${ext}`;
+      const up = await db.storage.from('coach-photos').upload(path, file, { upsert: true, contentType: file.type || 'image/jpeg' });
+      saveBtn.disabled = false;
+      if (up.error) { msg.innerHTML = `<div class="z33a-msg err">${esc(up.error.message)}</div>`; return; }
+      photoUrl = db.storage.from('coach-photos').getPublicUrl(path).data.publicUrl;
+      preview.src = photoUrl;
+      msg.textContent = 'Foto lista para guardar.';
+    };
     $('#z33-coach-form').onsubmit = async (e) => {
       e.preventDefault();
       // is_active NO se toca aquí: editar un coach no debe reactivarlo ni
       // desactivarlo. Ese estado solo cambia desde el botón Activar/Desactivar.
-      const payload = { name: $('#co-name').value.trim(), specialty: $('#co-specialty').value.trim() || null, photo_url: $('#co-photo').value.trim() || null, bio: $('#co-bio').value.trim() || null, updated_at: new Date().toISOString() };
+      const payload = { name: $('#co-name').value.trim(), specialty: $('#co-specialty').value.trim() || null, photo_url: photoUrl, bio: $('#co-bio').value.trim() || null, updated_at: new Date().toISOString() };
       const r = id
         ? await db.from('coaches').update(payload).eq('id', id)
         : await db.from('coaches').insert({ ...payload, is_active: true });
@@ -672,7 +698,7 @@
   // =================================================================
   // FINANZAS — un único flujo de pago (RPC admin_register_payment)
   // =================================================================
-  let chartInstance = null;
+  let chartInstance = null, trendChartInstance = null;
 
   function finance() {
     $('#z33-content').innerHTML = `${pageShell('Finanzas', 'Pagos, membresías, planes, fundadores y reportes.')}
@@ -707,50 +733,158 @@
     $$('[data-mem-pay]').forEach((b) => b.onclick = () => paymentForm(b.dataset.memPay));
   }
 
-  function periodRange(period) {
-    if (period === 'day') return [today(), today()];
-    if (period === 'year') return [today().slice(0, 4) + '-01-01', today()];
-    return [today().slice(0, 7) + '-01', today()];
+  const FINANCE_PERIODS = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes'], ['year', 'Año']];
+  const FIN_STATUS_LABEL = { approved: 'Pagado', pending: 'Pendiente', partial: 'Parcial', rejected: 'Rechazado', aprobado: 'Aprobado' };
+
+  // Un solo punto de verdad para "en qué cae cada fecha": tarjetas, las dos
+  // gráficas y el historial usan exactamente estos buckets, así que por
+  // construcción SUM(ingresos de las barras) === tarjeta Ingresos, etc.
+  // Nada de esto inserta filas: se calcula en memoria sobre state.payments
+  // y state.expenses (ya cargados por loadData()).
+  function financeBuckets(period) {
+    const t = today();
+    if (period === 'day') return [{ key: t, label: 'Hoy', from: t, to: t }];
+    if (period === 'week') {
+      const monday = weekMonday(t);
+      const names = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+      return Array.from({ length: 7 }, (_, i) => { const d = addDays(monday, i); return { key: d, label: names[i], from: d, to: d }; });
+    }
+    if (period === 'month') {
+      const ym = t.slice(0, 7);
+      const daysInMonth = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate();
+      const weeks = Math.ceil(daysInMonth / 7);
+      return Array.from({ length: weeks }, (_, i) => {
+        const startDay = i * 7 + 1, endDay = Math.min(startDay + 6, daysInMonth);
+        return { key: 'w' + (i + 1), label: 'Semana ' + (i + 1), from: `${ym}-${String(startDay).padStart(2, '0')}`, to: `${ym}-${String(endDay).padStart(2, '0')}` };
+      });
+    }
+    const y = t.slice(0, 4);
+    const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    return MONTHS.map((name, i) => {
+      const mm = String(i + 1).padStart(2, '0'), lastDay = new Date(Number(y), i + 1, 0).getDate();
+      return { key: y + '-' + mm, label: name, from: `${y}-${mm}-01`, to: `${y}-${mm}-${String(lastDay).padStart(2, '0')}` };
+    });
   }
-  function bucketKey(dateStr, period) {
-    if (period === 'day') return dateStr; // one bucket per hour would need time; day view buckets by date itself
-    if (period === 'year') return dateStr.slice(0, 7);
-    return dateStr; // month view: bucket by day
+
+  // Ingresos = payments aprobados en el bucket. Egresos = expenses en el
+  // bucket. Ambos filtran sobre los arreglos ya en memoria, sin duplicar
+  // ninguna consulta ni crear registros nuevos.
+  function financeMovements(from, to) {
+    const income = state.payments.filter((p) => p.status === 'approved' && (p.payment_date || '') >= from && (p.payment_date || '') <= to)
+      .map((p) => ({ type: 'Ingreso', id: p.id, date: p.payment_date, concept: p.concept || p.membership_plans?.name || 'Membresía', ref: p.profiles?.full_name || 'Cliente', method: p.method, amount: p.amount, status: p.status }));
+    const expense = state.expenses.filter((e) => (e.expense_date || '') >= from && (e.expense_date || '') <= to)
+      .map((e) => ({ type: 'Egreso', id: e.id, date: e.expense_date, concept: e.concept, ref: e.category || 'General', method: e.method, amount: e.amount, status: 'aprobado' }));
+    return [...income, ...expense].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }
+
+  // Eliminación real (DELETE) protegida por RPC admin-only. Un pago
+  // aprobado puede haber extendido una membresía: la RPC revierte ese
+  // efecto de forma exacta usando el snapshot guardado, o rechaza el
+  // borrado si no hay snapshot seguro (nunca resta días a ciegas).
+  async function deletePaymentAction(id, status) {
+    const warn = status === 'approved' ? '\n\nEste pago puede haber actualizado la membresía del cliente. Al eliminarlo se revertirá también el efecto de esta renovación.' : '';
+    if (!confirm(`¿Eliminar este pago? Esta acción no se puede deshacer.${warn}`)) return;
+    const r = await db.rpc('admin_delete_payment', { p_payment_id: id });
+    if (r.error) return alert(r.error.message);
+    await route('finance');
+  }
+  async function deleteExpenseAction(id) {
+    if (!confirm('¿Eliminar este egreso? Esta acción no se puede deshacer.')) return;
+    const r = await db.rpc('admin_delete_expense', { p_expense_id: id });
+    if (r.error) return alert(r.error.message);
+    await route('finance');
   }
 
   function financeOverview(body) {
-    const [from, to] = periodRange(state.reportPeriod);
-    const approved = state.payments.filter((p) => p.status === 'approved');
-    const inRange = approved.filter((p) => (p.payment_date || '').slice(0, 10) >= from && (p.payment_date || '').slice(0, 10) <= to);
-    const income = inRange.reduce((s, p) => s + Number(p.amount || 0), 0);
+    const buckets = financeBuckets(state.reportPeriod);
+    const from = buckets[0].from, to = buckets[buckets.length - 1].to;
+    const perBucket = buckets.map((b) => ({
+      ...b,
+      income: state.payments.filter((p) => p.status === 'approved' && (p.payment_date || '').slice(0, 10) >= b.from && (p.payment_date || '').slice(0, 10) <= b.to).reduce((s, p) => s + Number(p.amount || 0), 0),
+      expense: state.expenses.filter((e) => (e.expense_date || '').slice(0, 10) >= b.from && (e.expense_date || '').slice(0, 10) <= b.to).reduce((s, e) => s + Number(e.amount || 0), 0)
+    }));
+    // Las tarjetas son la SUMA de las mismas barras que se dibujan abajo --
+    // no una consulta aparte -- así que cuadran matemáticamente por diseño.
+    const totalIncome = perBucket.reduce((s, b) => s + b.income, 0);
+    const totalExpense = perBucket.reduce((s, b) => s + b.expense, 0);
+    const balance = totalIncome - totalExpense;
     const pendingAmt = state.payments.filter((p) => p.status === 'pending' || p.status === 'partial').reduce((s, p) => s + Number(p.amount || 0), 0);
-    const latest = latestMembershipByClient();
-    let activeMem = 0; for (const c of state.clients) if (membershipStatus(latest.get(c.id)).key === 'active') activeMem++;
-
-    const groups = {};
-    inRange.forEach((p) => { const k = bucketKey((p.payment_date || '').slice(0, 10), state.reportPeriod); groups[k] = (groups[k] || 0) + Number(p.amount || 0); });
-    const labels = Object.keys(groups).sort();
+    const movements = financeMovements(from, to);
+    const hasData = perBucket.some((b) => b.income || b.expense);
 
     body.innerHTML = `
-      <div class="z33a-stats">${stat('↗', 'red', money(income), 'Ingresos del período')}${stat('◷', 'amber', money(pendingAmt), 'Pagos pendientes')}${stat('♧', 'green', activeMem, 'Membresías activas')}${stat('☺', 'gray', state.clients.length, 'Total clientes')}</div>
-      <div class="z33a-chart">
-        <div class="z33a-toolbar" style="margin-bottom:0"><div class="z33a-chart-title">Ingresos aprobados</div>
-          <div class="z33a-filter-row">${['day', 'month', 'year'].map((p) => `<button class="z33a-filter ${state.reportPeriod === p ? 'active' : ''}" data-period="${p}">${p === 'day' ? 'Día' : p === 'month' ? 'Mes' : 'Año'}</button>`).join('')}</div>
-        </div>
-        <div class="z33a-chart-wrap">${labels.length ? '<canvas id="z33-income-chart"></canvas>' : '<div class="z33a-empty">No hay ingresos aprobados en este período.</div>'}</div>
+      <div class="z33a-toolbar" style="margin-bottom:14px">
+        <div class="z33a-filter-row">${FINANCE_PERIODS.map(([k, l]) => `<button class="z33a-filter ${state.reportPeriod === k ? 'active' : ''}" data-period="${k}">${l}</button>`).join('')}</div>
+        <div class="z33a-sub">${dateText(from)} – ${dateText(to)}</div>
       </div>
-      <div class="z33a-card" style="margin-top:16px"><h3 style="margin:0 0 10px">Pagos pendientes de cobro</h3><div class="z33a-list">${state.payments.filter((p) => p.status === 'pending' || p.status === 'partial').slice(0, 8).map((p) => `<div class="z33a-item"><div><b>${esc(p.profiles?.full_name || 'Cliente')}</b><small>${esc(p.concept || 'Pago')} · ${dateText(p.payment_date)}</small></div><strong>${money(p.amount)}</strong></div>`).join('') || '<div class="z33a-empty">No hay pagos pendientes.</div>'}</div></div>`;
+      <div class="z33a-stats">
+        ${stat('↗', 'red', money(totalIncome), 'Ingresos')}
+        ${stat('↘', 'gray', money(totalExpense), 'Egresos')}
+        ${stat('=', balance >= 0 ? 'green' : 'red', money(balance), 'Balance')}
+        ${stat('◷', 'amber', money(pendingAmt), 'Pagos pendientes')}
+      </div>
+      <div class="z33a-chart" style="margin-top:16px">
+        <div class="z33a-chart-title">Ingresos vs Egresos</div>
+        <div class="z33a-chart-wrap">${hasData ? '<canvas id="z33-income-expense-chart"></canvas>' : '<div class="z33a-empty">Sin movimientos en este período.</div>'}</div>
+      </div>
+      <div class="z33a-chart" style="margin-top:16px">
+        <div class="z33a-chart-title">Tendencia</div>
+        <div class="z33a-chart-wrap">${hasData ? '<canvas id="z33-trend-chart"></canvas>' : '<div class="z33a-empty">Sin movimientos en este período.</div>'}</div>
+      </div>
+      <div class="z33a-card" style="margin-top:16px">
+        <h3 style="margin:0 0 10px">Historial de movimientos</h3>
+        <div class="z33a-table"><table><thead><tr><th>Tipo</th><th>Fecha</th><th>Concepto</th><th>Cliente/Referencia</th><th>Método</th><th>Monto</th><th>Estado</th><th></th></tr></thead><tbody>${movements.length ? movements.map((m) => `<tr><td><span class="z33a-pill ${m.type === 'Ingreso' ? 'ok' : 'bad'}">${m.type}</span></td><td>${dateText(m.date)}</td><td>${esc(m.concept || '')}</td><td>${esc(m.ref || '')}</td><td>${esc(m.method || '—')}</td><td><b>${money(m.amount)}</b></td><td>${esc(FIN_STATUS_LABEL[m.status] || m.status)}</td><td>${m.type === 'Ingreso' ? `<button class="z33a-btn" data-mv-del-payment="${m.id}" data-mv-status="${m.status}">Eliminar</button>` : `<button class="z33a-btn" data-mv-del-expense="${m.id}">Eliminar</button>`}</td></tr>`).join('') : '<tr><td colspan="8" class="z33a-empty">Sin movimientos en este período.</td></tr>'}</tbody></table></div>
+      </div>`;
     $$('[data-period]').forEach((b) => b.onclick = () => { state.reportPeriod = b.dataset.period; financeOverview(body); });
-    if (labels.length) drawChart(labels, labels.map((k) => groups[k]));
+    $$('[data-mv-del-payment]').forEach((b) => b.onclick = () => deletePaymentAction(b.dataset.mvDelPayment, b.dataset.mvStatus));
+    $$('[data-mv-del-expense]').forEach((b) => b.onclick = () => deleteExpenseAction(b.dataset.mvDelExpense));
+    if (hasData) { drawIncomeExpenseChart(perBucket); drawTrendChart(perBucket); }
   }
 
-  function drawChart(labels, values) {
-    const canvas = $('#z33-income-chart'); if (!canvas || !window.Chart) return;
+  function financeChartOptions() {
+    return {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${money(ctx.parsed.y)}`,
+            footer: (items) => {
+              const inc = items.find((i) => i.dataset.label === 'Ingresos')?.parsed.y || 0;
+              const exp = items.find((i) => i.dataset.label === 'Egresos')?.parsed.y || 0;
+              return 'Balance: ' + money(inc - exp);
+            }
+          }
+        }
+      },
+      scales: { y: { beginAtZero: true, ticks: { callback: (v) => money(v) } } }
+    };
+  }
+
+  function drawIncomeExpenseChart(buckets) {
+    const canvas = $('#z33-income-expense-chart'); if (!canvas || !window.Chart) return;
     if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
     chartInstance = new window.Chart(canvas.getContext('2d'), {
       type: 'bar',
-      data: { labels: labels.map((l) => state.reportPeriod === 'year' ? l : l.slice(5)), datasets: [{ label: 'Ingresos', data: values, backgroundColor: '#d3232d', borderRadius: 5, maxBarThickness: 42 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => money(ctx.parsed.y) } } }, scales: { y: { beginAtZero: true, ticks: { callback: (v) => money(v) } } } }
+      data: { labels: buckets.map((b) => b.label), datasets: [
+        { label: 'Ingresos', data: buckets.map((b) => b.income), backgroundColor: '#d3232d', borderRadius: 5, maxBarThickness: 36 },
+        { label: 'Egresos', data: buckets.map((b) => b.expense), backgroundColor: '#22272d', borderRadius: 5, maxBarThickness: 36 }
+      ] },
+      options: financeChartOptions()
+    });
+  }
+
+  function drawTrendChart(buckets) {
+    const canvas = $('#z33-trend-chart'); if (!canvas || !window.Chart) return;
+    if (trendChartInstance) { trendChartInstance.destroy(); trendChartInstance = null; }
+    trendChartInstance = new window.Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: buckets.map((b) => b.label), datasets: [
+        { label: 'Ingresos', data: buckets.map((b) => b.income), borderColor: '#d3232d', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 },
+        { label: 'Egresos', data: buckets.map((b) => b.expense), borderColor: '#22272d', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }
+      ] },
+      options: financeChartOptions()
     });
   }
 
@@ -768,12 +902,13 @@
       const q = ($('#z33-pay-search')?.value || '').toLowerCase();
       let rows = state.payments.filter((p) => `${p.profiles?.full_name || ''} ${p.profiles?.email || ''} ${p.concept || ''}`.toLowerCase().includes(q));
       if (status !== 'all') rows = rows.filter((p) => p.status === status);
-      $('#z33-pay-body').innerHTML = rows.length ? rows.map((p) => `<tr><td><b>${esc(p.profiles?.full_name || 'Cliente')}</b><div class="z33a-muted">${esc(p.profiles?.email || '')}</div></td><td>${esc(p.concept || p.membership_plans?.name || 'Membresía')}</td><td><b>${money(p.amount)}</b></td><td>${dateText(p.payment_date)}</td><td>${esc(p.method || '—')}</td><td><span class="z33a-pill ${p.status === 'approved' ? 'ok' : p.status === 'pending' || p.status === 'partial' ? 'warn' : 'bad'}">${{ approved: 'Pagado', pending: 'Pendiente', partial: 'Parcial', rejected: 'Rechazado' }[p.status] || p.status}</span></td><td>${p.status !== 'approved' ? `<button class="z33a-btn" data-approve-pay="${p.id}">Marcar pagado</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="7" class="z33a-empty">Sin pagos.</td></tr>';
+      $('#z33-pay-body').innerHTML = rows.length ? rows.map((p) => `<tr><td><b>${esc(p.profiles?.full_name || 'Cliente')}</b><div class="z33a-muted">${esc(p.profiles?.email || '')}</div></td><td>${esc(p.concept || p.membership_plans?.name || 'Membresía')}</td><td><b>${money(p.amount)}</b></td><td>${dateText(p.payment_date)}</td><td>${esc(p.method || '—')}</td><td><span class="z33a-pill ${p.status === 'approved' ? 'ok' : p.status === 'pending' || p.status === 'partial' ? 'warn' : 'bad'}">${{ approved: 'Pagado', pending: 'Pendiente', partial: 'Parcial', rejected: 'Rechazado' }[p.status] || p.status}</span></td><td>${p.status !== 'approved' ? `<button class="z33a-btn" data-approve-pay="${p.id}">Marcar pagado</button> ` : ''}<button class="z33a-btn" data-del-payment="${p.id}" data-pay-status="${p.status}">Eliminar</button></td></tr>`).join('') : '<tr><td colspan="7" class="z33a-empty">Sin pagos.</td></tr>';
       $$('[data-approve-pay]').forEach((b) => b.onclick = async () => {
         const r = await db.rpc('admin_confirm_payment', { p_payment_id: b.dataset.approvePay });
         if (r.error) return alert(r.error.message);
         await route('finance');
       });
+      $$('[data-del-payment]').forEach((b) => b.onclick = () => deletePaymentAction(b.dataset.delPayment, b.dataset.payStatus));
     };
     $('#z33-pay-search').oninput = () => draw($('.z33a-filter.active')?.dataset.payfilter || 'all');
     $$('[data-payfilter]').forEach((b) => b.onclick = () => { $$('[data-payfilter]').forEach((x) => x.classList.remove('active')); b.classList.add('active'); draw(b.dataset.payfilter); });
@@ -882,8 +1017,9 @@
     const outgo = state.expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
     body.innerHTML = `<div class="z33a-stats">${stat('↗', 'red', money(income), 'Ingresos totales')}${stat('↘', 'amber', money(outgo), 'Egresos totales')}${stat('=', 'gray', money(income - outgo), 'Balance')}</div>
       <div class="z33a-toolbar" style="margin-top:16px"><span class="z33a-sub">Historial de egresos</span><button class="z33a-btn red" id="z33-new-expense">Registrar egreso</button></div>
-      <div class="z33a-table"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Monto</th></tr></thead><tbody>${state.expenses.map((e) => `<tr><td>${dateText(e.expense_date)}</td><td>${esc(e.concept)}</td><td>${esc(e.category || 'General')}</td><td><b>${money(e.amount)}</b></td></tr>`).join('') || '<tr><td colspan="4" class="z33a-empty">Sin egresos registrados.</td></tr>'}</tbody></table></div>`;
+      <div class="z33a-table"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Monto</th><th></th></tr></thead><tbody>${state.expenses.map((e) => `<tr><td>${dateText(e.expense_date)}</td><td>${esc(e.concept)}</td><td>${esc(e.category || 'General')}</td><td><b>${money(e.amount)}</b></td><td><button class="z33a-btn" data-del-expense="${e.id}">Eliminar</button></td></tr>`).join('') || '<tr><td colspan="5" class="z33a-empty">Sin egresos registrados.</td></tr>'}</tbody></table></div>`;
     $('#z33-new-expense').onclick = () => expenseForm();
+    $$('[data-del-expense]').forEach((b) => b.onclick = () => deleteExpenseAction(b.dataset.delExpense));
   }
 
   function expenseForm() {
