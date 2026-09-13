@@ -503,20 +503,27 @@
     $$('[data-open-class]').forEach((b) => b.onclick = () => openClassDetail(b.dataset.openClass));
   }
 
+  const CLASS_STATUS_LABEL = { scheduled: 'Programada', cancelled: 'Cancelada', completed: 'Completada' };
+  const CLASS_STATUS_TONE = { scheduled: 'ok', cancelled: 'bad', completed: 'off' };
+
+  // Misma tabla que usan Clientes/Finanzas (z33a-table) para que la vista
+  // Día se sienta parte del mismo panel, no una pantalla aparte. Las
+  // acciones (editar/cancelar/reactivar/eliminar) viven todas en el drawer
+  // de detalle -- no se duplica esa lógica aquí, solo se abre.
   function agendaDay() {
     const d = state.dayAnchor;
     const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-    const label = dayNames[new Date(d + 'T12:00:00').getDay()] + ' ' + new Date(d + 'T12:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' });
-    const rows = classesForDay(d);
+    const label = dayNames[new Date(d + 'T12:00:00').getDay()] + ' · ' + new Date(d + 'T12:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' });
+    const rows = state.classes.filter((c) => c.class_date === d).sort((a, b) => timeText(a.start_time).localeCompare(timeText(b.start_time)));
     $('#z33-content').innerHTML = `${pageShell('Clases / Horarios', label, '<button class="z33a-btn red" id="z33-new-class">+ Clase</button>')}
       <div class="z33a-toolbar">
         ${agendaViewToggle()}
         <div class="z33a-actions-row"><button class="z33a-btn" id="z33-day-prev">← Día</button><button class="z33a-btn" id="z33-day-today">Hoy</button><button class="z33a-btn" id="z33-day-next">Día →</button></div>
       </div>
-      <div class="z33a-card"><div class="z33a-list">${rows.length ? rows.map((c) => {
+      <div class="z33a-table"><table><thead><tr><th>Hora</th><th>Clase</th><th>Duración</th><th>Coach</th><th>Ocupados/Cap.</th><th>Estado</th><th></th></tr></thead><tbody>${rows.length ? rows.map((c) => {
         const booked = state.reservations.filter((r) => r.class_id === c.id && r.status === 'reserved').length;
-        return `<div class="z33a-item" data-open-class="${c.id}" style="cursor:pointer"><div><b>${timeText(c.start_time)} · ${esc(c.class_type)}</b><div class="z33a-muted">${esc(c.coach?.name || 'Sin coach')} · ${c.duration_minutes || 60} min${c.is_master_class ? ' · Clase maestra' : ''}</div></div><span class="z33a-pill ${booked >= (c.capacity || 10) ? 'bad' : 'ok'}">${booked}/${c.capacity || 10}</span></div>`;
-      }).join('') : '<div class="z33a-empty">No hay clases este día.</div>'}</div></div>`;
+        return `<tr><td><b>${timeText(c.start_time)}</b></td><td>${esc(c.class_type)}${c.is_master_class ? ' <span class="z33a-pill warn">Maestra</span>' : ''}</td><td>${c.duration_minutes || 60} min</td><td>${esc(c.coach?.name || 'Sin coach')}</td><td><span class="z33a-pill ${booked >= (c.capacity || 10) ? 'bad' : 'ok'}">${booked}/${c.capacity || 10}</span></td><td><span class="z33a-pill ${CLASS_STATUS_TONE[c.status] || 'off'}">${CLASS_STATUS_LABEL[c.status] || c.status}</span></td><td><button class="z33a-btn" data-open-class="${c.id}">Ver</button></td></tr>`;
+      }).join('') : '<tr><td colspan="7" class="z33a-empty">No hay clases este día.</td></tr>'}</tbody></table></div>`;
     $('#z33-new-class').onclick = () => classForm(null, d);
     $('#z33-day-prev').onclick = () => { state.dayAnchor = addDays(state.dayAnchor, -1); agenda(); };
     $('#z33-day-next').onclick = () => { state.dayAnchor = addDays(state.dayAnchor, 1); agenda(); };
@@ -567,13 +574,21 @@
       <div class="z33a-card" style="margin-top:10px"><b>Reservas</b><div class="z33a-list" style="margin-top:8px">${rs.map((r) => `<div class="z33a-item"><div><b>${esc(r.profiles?.full_name || 'Cliente')}</b><div class="z33a-muted">${esc(r.profiles?.phone || '')} · ${esc(r.profiles?.email || '')}</div></div><span class="z33a-pill ${r.status === 'reserved' ? 'ok' : 'warn'}">${esc(r.status)}</span></div>`).join('') || '<div class="z33a-empty">Sin reservas.</div>'}</div></div>
       <div class="z33a-actions-row" style="margin-top:12px">
         <button class="z33a-btn" id="z33-class-edit">Editar</button>
-        ${c.status !== 'cancelled' ? '<button class="z33a-btn" id="z33-class-cancel">Cancelar clase</button>' : '<span class="z33a-pill bad">Cancelada</span>'}
+        ${c.status === 'cancelled'
+          ? '<button class="z33a-btn" id="z33-class-reactivate">Reactivar clase</button>'
+          : '<button class="z33a-btn" id="z33-class-cancel">Cancelar clase</button>'}
         <button class="z33a-btn danger" id="z33-class-delete">Eliminar clase</button>
       </div>`);
     $('#z33-class-edit').onclick = () => classForm(id);
     $('#z33-class-cancel')?.addEventListener('click', async () => {
       if (!confirm('¿Cancelar esta clase?\n\nEl registro y su historial de reservas se conservan; solo cambia su estado a "cancelled". Esto es distinto de eliminarla.')) return;
       const r = await db.from('classes').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', id);
+      if (r.error) return alert(r.error.message);
+      closeDrawer(); await route('agenda');
+    });
+    $('#z33-class-reactivate')?.addEventListener('click', async () => {
+      if (!confirm('¿Reactivar esta clase? Volverá a estar programada (scheduled).')) return;
+      const r = await db.from('classes').update({ status: 'scheduled', updated_at: new Date().toISOString() }).eq('id', id);
       if (r.error) return alert(r.error.message);
       closeDrawer(); await route('agenda');
     });
