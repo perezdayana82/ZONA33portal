@@ -745,10 +745,28 @@
   // ninguna consulta ni crear registros nuevos.
   function financeMovements(from, to) {
     const income = state.payments.filter((p) => p.status === 'approved' && (p.payment_date || '') >= from && (p.payment_date || '') <= to)
-      .map((p) => ({ type: 'Ingreso', date: p.payment_date, concept: p.concept || p.membership_plans?.name || 'Membresía', ref: p.profiles?.full_name || 'Cliente', method: p.method, amount: p.amount, status: p.status }));
+      .map((p) => ({ type: 'Ingreso', id: p.id, date: p.payment_date, concept: p.concept || p.membership_plans?.name || 'Membresía', ref: p.profiles?.full_name || 'Cliente', method: p.method, amount: p.amount, status: p.status }));
     const expense = state.expenses.filter((e) => (e.expense_date || '') >= from && (e.expense_date || '') <= to)
-      .map((e) => ({ type: 'Egreso', date: e.expense_date, concept: e.concept, ref: e.category || 'General', method: e.method, amount: e.amount, status: 'aprobado' }));
+      .map((e) => ({ type: 'Egreso', id: e.id, date: e.expense_date, concept: e.concept, ref: e.category || 'General', method: e.method, amount: e.amount, status: 'aprobado' }));
     return [...income, ...expense].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }
+
+  // Eliminación real (DELETE) protegida por RPC admin-only. Un pago
+  // aprobado puede haber extendido una membresía: la RPC revierte ese
+  // efecto de forma exacta usando el snapshot guardado, o rechaza el
+  // borrado si no hay snapshot seguro (nunca resta días a ciegas).
+  async function deletePaymentAction(id, status) {
+    const warn = status === 'approved' ? '\n\nEste pago puede haber actualizado la membresía del cliente. Al eliminarlo se revertirá también el efecto de esta renovación.' : '';
+    if (!confirm(`¿Eliminar este pago? Esta acción no se puede deshacer.${warn}`)) return;
+    const r = await db.rpc('admin_delete_payment', { p_payment_id: id });
+    if (r.error) return alert(r.error.message);
+    await route('finance');
+  }
+  async function deleteExpenseAction(id) {
+    if (!confirm('¿Eliminar este egreso? Esta acción no se puede deshacer.')) return;
+    const r = await db.rpc('admin_delete_expense', { p_expense_id: id });
+    if (r.error) return alert(r.error.message);
+    await route('finance');
   }
 
   function financeOverview(body) {
@@ -789,9 +807,11 @@
       </div>
       <div class="z33a-card" style="margin-top:16px">
         <h3 style="margin:0 0 10px">Historial de movimientos</h3>
-        <div class="z33a-table"><table><thead><tr><th>Tipo</th><th>Fecha</th><th>Concepto</th><th>Cliente/Referencia</th><th>Método</th><th>Monto</th><th>Estado</th></tr></thead><tbody>${movements.length ? movements.map((m) => `<tr><td><span class="z33a-pill ${m.type === 'Ingreso' ? 'ok' : 'bad'}">${m.type}</span></td><td>${dateText(m.date)}</td><td>${esc(m.concept || '')}</td><td>${esc(m.ref || '')}</td><td>${esc(m.method || '—')}</td><td><b>${money(m.amount)}</b></td><td>${esc(FIN_STATUS_LABEL[m.status] || m.status)}</td></tr>`).join('') : '<tr><td colspan="7" class="z33a-empty">Sin movimientos en este período.</td></tr>'}</tbody></table></div>
+        <div class="z33a-table"><table><thead><tr><th>Tipo</th><th>Fecha</th><th>Concepto</th><th>Cliente/Referencia</th><th>Método</th><th>Monto</th><th>Estado</th><th></th></tr></thead><tbody>${movements.length ? movements.map((m) => `<tr><td><span class="z33a-pill ${m.type === 'Ingreso' ? 'ok' : 'bad'}">${m.type}</span></td><td>${dateText(m.date)}</td><td>${esc(m.concept || '')}</td><td>${esc(m.ref || '')}</td><td>${esc(m.method || '—')}</td><td><b>${money(m.amount)}</b></td><td>${esc(FIN_STATUS_LABEL[m.status] || m.status)}</td><td>${m.type === 'Ingreso' ? `<button class="z33a-btn" data-mv-del-payment="${m.id}" data-mv-status="${m.status}">Eliminar</button>` : `<button class="z33a-btn" data-mv-del-expense="${m.id}">Eliminar</button>`}</td></tr>`).join('') : '<tr><td colspan="8" class="z33a-empty">Sin movimientos en este período.</td></tr>'}</tbody></table></div>
       </div>`;
     $$('[data-period]').forEach((b) => b.onclick = () => { state.reportPeriod = b.dataset.period; financeOverview(body); });
+    $$('[data-mv-del-payment]').forEach((b) => b.onclick = () => deletePaymentAction(b.dataset.mvDelPayment, b.dataset.mvStatus));
+    $$('[data-mv-del-expense]').forEach((b) => b.onclick = () => deleteExpenseAction(b.dataset.mvDelExpense));
     if (hasData) { drawIncomeExpenseChart(perBucket); drawTrendChart(perBucket); }
   }
 
@@ -856,12 +876,13 @@
       const q = ($('#z33-pay-search')?.value || '').toLowerCase();
       let rows = state.payments.filter((p) => `${p.profiles?.full_name || ''} ${p.profiles?.email || ''} ${p.concept || ''}`.toLowerCase().includes(q));
       if (status !== 'all') rows = rows.filter((p) => p.status === status);
-      $('#z33-pay-body').innerHTML = rows.length ? rows.map((p) => `<tr><td><b>${esc(p.profiles?.full_name || 'Cliente')}</b><div class="z33a-muted">${esc(p.profiles?.email || '')}</div></td><td>${esc(p.concept || p.membership_plans?.name || 'Membresía')}</td><td><b>${money(p.amount)}</b></td><td>${dateText(p.payment_date)}</td><td>${esc(p.method || '—')}</td><td><span class="z33a-pill ${p.status === 'approved' ? 'ok' : p.status === 'pending' || p.status === 'partial' ? 'warn' : 'bad'}">${{ approved: 'Pagado', pending: 'Pendiente', partial: 'Parcial', rejected: 'Rechazado' }[p.status] || p.status}</span></td><td>${p.status !== 'approved' ? `<button class="z33a-btn" data-approve-pay="${p.id}">Marcar pagado</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="7" class="z33a-empty">Sin pagos.</td></tr>';
+      $('#z33-pay-body').innerHTML = rows.length ? rows.map((p) => `<tr><td><b>${esc(p.profiles?.full_name || 'Cliente')}</b><div class="z33a-muted">${esc(p.profiles?.email || '')}</div></td><td>${esc(p.concept || p.membership_plans?.name || 'Membresía')}</td><td><b>${money(p.amount)}</b></td><td>${dateText(p.payment_date)}</td><td>${esc(p.method || '—')}</td><td><span class="z33a-pill ${p.status === 'approved' ? 'ok' : p.status === 'pending' || p.status === 'partial' ? 'warn' : 'bad'}">${{ approved: 'Pagado', pending: 'Pendiente', partial: 'Parcial', rejected: 'Rechazado' }[p.status] || p.status}</span></td><td>${p.status !== 'approved' ? `<button class="z33a-btn" data-approve-pay="${p.id}">Marcar pagado</button> ` : ''}<button class="z33a-btn" data-del-payment="${p.id}" data-pay-status="${p.status}">Eliminar</button></td></tr>`).join('') : '<tr><td colspan="7" class="z33a-empty">Sin pagos.</td></tr>';
       $$('[data-approve-pay]').forEach((b) => b.onclick = async () => {
         const r = await db.rpc('admin_confirm_payment', { p_payment_id: b.dataset.approvePay });
         if (r.error) return alert(r.error.message);
         await route('finance');
       });
+      $$('[data-del-payment]').forEach((b) => b.onclick = () => deletePaymentAction(b.dataset.delPayment, b.dataset.payStatus));
     };
     $('#z33-pay-search').oninput = () => draw($('.z33a-filter.active')?.dataset.payfilter || 'all');
     $$('[data-payfilter]').forEach((b) => b.onclick = () => { $$('[data-payfilter]').forEach((x) => x.classList.remove('active')); b.classList.add('active'); draw(b.dataset.payfilter); });
@@ -970,8 +991,9 @@
     const outgo = state.expenses.reduce((s, e) => s + Number(e.amount || 0), 0);
     body.innerHTML = `<div class="z33a-stats">${stat('↗', 'red', money(income), 'Ingresos totales')}${stat('↘', 'amber', money(outgo), 'Egresos totales')}${stat('=', 'gray', money(income - outgo), 'Balance')}</div>
       <div class="z33a-toolbar" style="margin-top:16px"><span class="z33a-sub">Historial de egresos</span><button class="z33a-btn red" id="z33-new-expense">Registrar egreso</button></div>
-      <div class="z33a-table"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Monto</th></tr></thead><tbody>${state.expenses.map((e) => `<tr><td>${dateText(e.expense_date)}</td><td>${esc(e.concept)}</td><td>${esc(e.category || 'General')}</td><td><b>${money(e.amount)}</b></td></tr>`).join('') || '<tr><td colspan="4" class="z33a-empty">Sin egresos registrados.</td></tr>'}</tbody></table></div>`;
+      <div class="z33a-table"><table><thead><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Monto</th><th></th></tr></thead><tbody>${state.expenses.map((e) => `<tr><td>${dateText(e.expense_date)}</td><td>${esc(e.concept)}</td><td>${esc(e.category || 'General')}</td><td><b>${money(e.amount)}</b></td><td><button class="z33a-btn" data-del-expense="${e.id}">Eliminar</button></td></tr>`).join('') || '<tr><td colspan="5" class="z33a-empty">Sin egresos registrados.</td></tr>'}</tbody></table></div>`;
     $('#z33-new-expense').onclick = () => expenseForm();
+    $$('[data-del-expense]').forEach((b) => b.onclick = () => deleteExpenseAction(b.dataset.delExpense));
   }
 
   function expenseForm() {
