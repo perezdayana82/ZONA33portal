@@ -1142,14 +1142,19 @@
     ['community', 'Comunidad'], ['instagram', 'Instagram'], ['gallery', 'Galería'], ['contact', 'Contacto'],
     ['social', 'Redes'], ['footer', 'Footer']
   ];
+  // "Vista previa" NO es un preview embebido: este repositorio no contiene
+  // el landing público (vive en un proyecto/repositorio aparte). El botón
+  // abre el sitio público REAL en una pestaña nueva, para no crear un
+  // landing paralelo ni simular un preview que no refleja el sitio real.
   function landing() {
-    $('#z33-content').innerHTML = `${pageShell('Editar Landing', 'Centro de administración del contenido público de ZONA 33.', '<button class="z33a-btn" id="z33-landing-preview">Vista previa</button>')}
+    $('#z33-content').innerHTML = `${pageShell('Editar Landing', 'Centro de administración del contenido público de ZONA 33.', '<button class="z33a-btn" id="z33-landing-preview">Ver sitio público ↗</button>')}
       <div class="z33a-tabs" style="flex-wrap:wrap;row-gap:6px">${LANDING_TABS.map(([k, l]) => `<button class="z33a-tab ${state.landingTab === k ? 'active' : ''}" data-landing-tab="${k}">${l}</button>`).join('')}</div>
+      <p class="z33a-muted" style="margin:8px 0 0">"Ver sitio público" abre el sitio real en una pestaña nueva — no es una vista previa interna. Los cambios que guardes aquí se reflejan ahí en cuanto el visitante recarga la página.</p>
       <div id="z33-landing-body" style="margin-top:16px"></div>`;
     $$('[data-landing-tab]').forEach((b) => b.onclick = () => { state.landingTab = b.dataset.landingTab; landing(); });
     $('#z33-landing-preview').onclick = () => {
       const url = (state.site.brand || {}).public_url;
-      if (!url) return alert('Configura la "URL del sitio público" en General / Marca para usar Vista previa.');
+      if (!url) return alert('Configura la "URL del sitio público" en General / Marca para usar "Ver sitio público".');
       window.open(url, '_blank');
     };
     landingTabBody();
