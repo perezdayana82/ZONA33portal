@@ -672,7 +672,7 @@
   // =================================================================
   // FINANZAS — un único flujo de pago (RPC admin_register_payment)
   // =================================================================
-  let chartInstance = null;
+  let chartInstance = null, trendChartInstance = null;
 
   function finance() {
     $('#z33-content').innerHTML = `${pageShell('Finanzas', 'Pagos, membresías, planes, fundadores y reportes.')}
@@ -707,50 +707,138 @@
     $$('[data-mem-pay]').forEach((b) => b.onclick = () => paymentForm(b.dataset.memPay));
   }
 
-  function periodRange(period) {
-    if (period === 'day') return [today(), today()];
-    if (period === 'year') return [today().slice(0, 4) + '-01-01', today()];
-    return [today().slice(0, 7) + '-01', today()];
+  const FINANCE_PERIODS = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes'], ['year', 'Año']];
+  const FIN_STATUS_LABEL = { approved: 'Pagado', pending: 'Pendiente', partial: 'Parcial', rejected: 'Rechazado', aprobado: 'Aprobado' };
+
+  // Un solo punto de verdad para "en qué cae cada fecha": tarjetas, las dos
+  // gráficas y el historial usan exactamente estos buckets, así que por
+  // construcción SUM(ingresos de las barras) === tarjeta Ingresos, etc.
+  // Nada de esto inserta filas: se calcula en memoria sobre state.payments
+  // y state.expenses (ya cargados por loadData()).
+  function financeBuckets(period) {
+    const t = today();
+    if (period === 'day') return [{ key: t, label: 'Hoy', from: t, to: t }];
+    if (period === 'week') {
+      const monday = weekMonday(t);
+      const names = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+      return Array.from({ length: 7 }, (_, i) => { const d = addDays(monday, i); return { key: d, label: names[i], from: d, to: d }; });
+    }
+    if (period === 'month') {
+      const ym = t.slice(0, 7);
+      const daysInMonth = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate();
+      const weeks = Math.ceil(daysInMonth / 7);
+      return Array.from({ length: weeks }, (_, i) => {
+        const startDay = i * 7 + 1, endDay = Math.min(startDay + 6, daysInMonth);
+        return { key: 'w' + (i + 1), label: 'Semana ' + (i + 1), from: `${ym}-${String(startDay).padStart(2, '0')}`, to: `${ym}-${String(endDay).padStart(2, '0')}` };
+      });
+    }
+    const y = t.slice(0, 4);
+    const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    return MONTHS.map((name, i) => {
+      const mm = String(i + 1).padStart(2, '0'), lastDay = new Date(Number(y), i + 1, 0).getDate();
+      return { key: y + '-' + mm, label: name, from: `${y}-${mm}-01`, to: `${y}-${mm}-${String(lastDay).padStart(2, '0')}` };
+    });
   }
-  function bucketKey(dateStr, period) {
-    if (period === 'day') return dateStr; // one bucket per hour would need time; day view buckets by date itself
-    if (period === 'year') return dateStr.slice(0, 7);
-    return dateStr; // month view: bucket by day
+
+  // Ingresos = payments aprobados en el bucket. Egresos = expenses en el
+  // bucket. Ambos filtran sobre los arreglos ya en memoria, sin duplicar
+  // ninguna consulta ni crear registros nuevos.
+  function financeMovements(from, to) {
+    const income = state.payments.filter((p) => p.status === 'approved' && (p.payment_date || '') >= from && (p.payment_date || '') <= to)
+      .map((p) => ({ type: 'Ingreso', date: p.payment_date, concept: p.concept || p.membership_plans?.name || 'Membresía', ref: p.profiles?.full_name || 'Cliente', method: p.method, amount: p.amount, status: p.status }));
+    const expense = state.expenses.filter((e) => (e.expense_date || '') >= from && (e.expense_date || '') <= to)
+      .map((e) => ({ type: 'Egreso', date: e.expense_date, concept: e.concept, ref: e.category || 'General', method: e.method, amount: e.amount, status: 'aprobado' }));
+    return [...income, ...expense].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }
 
   function financeOverview(body) {
-    const [from, to] = periodRange(state.reportPeriod);
-    const approved = state.payments.filter((p) => p.status === 'approved');
-    const inRange = approved.filter((p) => (p.payment_date || '').slice(0, 10) >= from && (p.payment_date || '').slice(0, 10) <= to);
-    const income = inRange.reduce((s, p) => s + Number(p.amount || 0), 0);
+    const buckets = financeBuckets(state.reportPeriod);
+    const from = buckets[0].from, to = buckets[buckets.length - 1].to;
+    const perBucket = buckets.map((b) => ({
+      ...b,
+      income: state.payments.filter((p) => p.status === 'approved' && (p.payment_date || '').slice(0, 10) >= b.from && (p.payment_date || '').slice(0, 10) <= b.to).reduce((s, p) => s + Number(p.amount || 0), 0),
+      expense: state.expenses.filter((e) => (e.expense_date || '').slice(0, 10) >= b.from && (e.expense_date || '').slice(0, 10) <= b.to).reduce((s, e) => s + Number(e.amount || 0), 0)
+    }));
+    // Las tarjetas son la SUMA de las mismas barras que se dibujan abajo --
+    // no una consulta aparte -- así que cuadran matemáticamente por diseño.
+    const totalIncome = perBucket.reduce((s, b) => s + b.income, 0);
+    const totalExpense = perBucket.reduce((s, b) => s + b.expense, 0);
+    const balance = totalIncome - totalExpense;
     const pendingAmt = state.payments.filter((p) => p.status === 'pending' || p.status === 'partial').reduce((s, p) => s + Number(p.amount || 0), 0);
-    const latest = latestMembershipByClient();
-    let activeMem = 0; for (const c of state.clients) if (membershipStatus(latest.get(c.id)).key === 'active') activeMem++;
-
-    const groups = {};
-    inRange.forEach((p) => { const k = bucketKey((p.payment_date || '').slice(0, 10), state.reportPeriod); groups[k] = (groups[k] || 0) + Number(p.amount || 0); });
-    const labels = Object.keys(groups).sort();
+    const movements = financeMovements(from, to);
+    const hasData = perBucket.some((b) => b.income || b.expense);
 
     body.innerHTML = `
-      <div class="z33a-stats">${stat('↗', 'red', money(income), 'Ingresos del período')}${stat('◷', 'amber', money(pendingAmt), 'Pagos pendientes')}${stat('♧', 'green', activeMem, 'Membresías activas')}${stat('☺', 'gray', state.clients.length, 'Total clientes')}</div>
-      <div class="z33a-chart">
-        <div class="z33a-toolbar" style="margin-bottom:0"><div class="z33a-chart-title">Ingresos aprobados</div>
-          <div class="z33a-filter-row">${['day', 'month', 'year'].map((p) => `<button class="z33a-filter ${state.reportPeriod === p ? 'active' : ''}" data-period="${p}">${p === 'day' ? 'Día' : p === 'month' ? 'Mes' : 'Año'}</button>`).join('')}</div>
-        </div>
-        <div class="z33a-chart-wrap">${labels.length ? '<canvas id="z33-income-chart"></canvas>' : '<div class="z33a-empty">No hay ingresos aprobados en este período.</div>'}</div>
+      <div class="z33a-toolbar" style="margin-bottom:14px">
+        <div class="z33a-filter-row">${FINANCE_PERIODS.map(([k, l]) => `<button class="z33a-filter ${state.reportPeriod === k ? 'active' : ''}" data-period="${k}">${l}</button>`).join('')}</div>
+        <div class="z33a-sub">${dateText(from)} – ${dateText(to)}</div>
       </div>
-      <div class="z33a-card" style="margin-top:16px"><h3 style="margin:0 0 10px">Pagos pendientes de cobro</h3><div class="z33a-list">${state.payments.filter((p) => p.status === 'pending' || p.status === 'partial').slice(0, 8).map((p) => `<div class="z33a-item"><div><b>${esc(p.profiles?.full_name || 'Cliente')}</b><small>${esc(p.concept || 'Pago')} · ${dateText(p.payment_date)}</small></div><strong>${money(p.amount)}</strong></div>`).join('') || '<div class="z33a-empty">No hay pagos pendientes.</div>'}</div></div>`;
+      <div class="z33a-stats">
+        ${stat('↗', 'red', money(totalIncome), 'Ingresos')}
+        ${stat('↘', 'gray', money(totalExpense), 'Egresos')}
+        ${stat('=', balance >= 0 ? 'green' : 'red', money(balance), 'Balance')}
+        ${stat('◷', 'amber', money(pendingAmt), 'Pagos pendientes')}
+      </div>
+      <div class="z33a-chart" style="margin-top:16px">
+        <div class="z33a-chart-title">Ingresos vs Egresos</div>
+        <div class="z33a-chart-wrap">${hasData ? '<canvas id="z33-income-expense-chart"></canvas>' : '<div class="z33a-empty">Sin movimientos en este período.</div>'}</div>
+      </div>
+      <div class="z33a-chart" style="margin-top:16px">
+        <div class="z33a-chart-title">Tendencia</div>
+        <div class="z33a-chart-wrap">${hasData ? '<canvas id="z33-trend-chart"></canvas>' : '<div class="z33a-empty">Sin movimientos en este período.</div>'}</div>
+      </div>
+      <div class="z33a-card" style="margin-top:16px">
+        <h3 style="margin:0 0 10px">Historial de movimientos</h3>
+        <div class="z33a-table"><table><thead><tr><th>Tipo</th><th>Fecha</th><th>Concepto</th><th>Cliente/Referencia</th><th>Método</th><th>Monto</th><th>Estado</th></tr></thead><tbody>${movements.length ? movements.map((m) => `<tr><td><span class="z33a-pill ${m.type === 'Ingreso' ? 'ok' : 'bad'}">${m.type}</span></td><td>${dateText(m.date)}</td><td>${esc(m.concept || '')}</td><td>${esc(m.ref || '')}</td><td>${esc(m.method || '—')}</td><td><b>${money(m.amount)}</b></td><td>${esc(FIN_STATUS_LABEL[m.status] || m.status)}</td></tr>`).join('') : '<tr><td colspan="7" class="z33a-empty">Sin movimientos en este período.</td></tr>'}</tbody></table></div>
+      </div>`;
     $$('[data-period]').forEach((b) => b.onclick = () => { state.reportPeriod = b.dataset.period; financeOverview(body); });
-    if (labels.length) drawChart(labels, labels.map((k) => groups[k]));
+    if (hasData) { drawIncomeExpenseChart(perBucket); drawTrendChart(perBucket); }
   }
 
-  function drawChart(labels, values) {
-    const canvas = $('#z33-income-chart'); if (!canvas || !window.Chart) return;
+  function financeChartOptions() {
+    return {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${money(ctx.parsed.y)}`,
+            footer: (items) => {
+              const inc = items.find((i) => i.dataset.label === 'Ingresos')?.parsed.y || 0;
+              const exp = items.find((i) => i.dataset.label === 'Egresos')?.parsed.y || 0;
+              return 'Balance: ' + money(inc - exp);
+            }
+          }
+        }
+      },
+      scales: { y: { beginAtZero: true, ticks: { callback: (v) => money(v) } } }
+    };
+  }
+
+  function drawIncomeExpenseChart(buckets) {
+    const canvas = $('#z33-income-expense-chart'); if (!canvas || !window.Chart) return;
     if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
     chartInstance = new window.Chart(canvas.getContext('2d'), {
       type: 'bar',
-      data: { labels: labels.map((l) => state.reportPeriod === 'year' ? l : l.slice(5)), datasets: [{ label: 'Ingresos', data: values, backgroundColor: '#d3232d', borderRadius: 5, maxBarThickness: 42 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => money(ctx.parsed.y) } } }, scales: { y: { beginAtZero: true, ticks: { callback: (v) => money(v) } } } }
+      data: { labels: buckets.map((b) => b.label), datasets: [
+        { label: 'Ingresos', data: buckets.map((b) => b.income), backgroundColor: '#d3232d', borderRadius: 5, maxBarThickness: 36 },
+        { label: 'Egresos', data: buckets.map((b) => b.expense), backgroundColor: '#22272d', borderRadius: 5, maxBarThickness: 36 }
+      ] },
+      options: financeChartOptions()
+    });
+  }
+
+  function drawTrendChart(buckets) {
+    const canvas = $('#z33-trend-chart'); if (!canvas || !window.Chart) return;
+    if (trendChartInstance) { trendChartInstance.destroy(); trendChartInstance = null; }
+    trendChartInstance = new window.Chart(canvas.getContext('2d'), {
+      type: 'line',
+      data: { labels: buckets.map((b) => b.label), datasets: [
+        { label: 'Ingresos', data: buckets.map((b) => b.income), borderColor: '#d3232d', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 },
+        { label: 'Egresos', data: buckets.map((b) => b.expense), borderColor: '#22272d', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }
+      ] },
+      options: financeChartOptions()
     });
   }
 
