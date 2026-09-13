@@ -785,11 +785,25 @@
   // aprobado puede haber extendido una membresía: la RPC revierte ese
   // efecto de forma exacta usando el snapshot guardado, o rechaza el
   // borrado si no hay snapshot seguro (nunca resta días a ciegas).
+  const NO_SNAPSHOT_MSG = 'No es posible reconstruir automáticamente la membresía de este pago histórico sin riesgo de alterar fechas. Revisa la membresía antes de eliminarlo.';
   async function deletePaymentAction(id, status) {
     const warn = status === 'approved' ? '\n\nEste pago puede haber actualizado la membresía del cliente. Al eliminarlo se revertirá también el efecto de esta renovación.' : '';
     if (!confirm(`¿Eliminar este pago? Esta acción no se puede deshacer.${warn}`)) return;
     const r = await db.rpc('admin_delete_payment', { p_payment_id: id });
-    if (r.error) return alert(r.error.message);
+    if (r.error) {
+      // Pago aprobado antiguo sin snapshot y sin reconstrucción determinista
+      // posible: no se bloquea en silencio. Se ofrece una acción separada y
+      // explícita que el admin elige a sabiendas de que no toca la membresía.
+      if (r.error.message === NO_SNAPSHOT_MSG) {
+        if (confirm(`${NO_SNAPSHOT_MSG}\n\n¿Eliminar solo el movimiento financiero? La membresía del cliente NO se modificará.`)) {
+          const r2 = await db.rpc('admin_delete_payment', { p_payment_id: id, p_financial_only: true });
+          if (r2.error) return alert(r2.error.message);
+          await route('finance');
+        }
+        return;
+      }
+      return alert(r.error.message);
+    }
     await route('finance');
   }
   async function deleteExpenseAction(id) {
@@ -866,30 +880,45 @@
     };
   }
 
+  // Si Chart.js no cargó (CDN caído, bloqueado, etc.) o new Chart() lanza por
+  // cualquier razón, NUNCA dejamos un contenedor en blanco sin explicación:
+  // se reemplaza por un mensaje visible dentro del mismo .z33a-chart-wrap.
+  function chartFallback(canvas, reason) {
+    console.error('[Finanzas] No se pudo renderizar la gráfica:', reason);
+    const wrap = canvas && canvas.parentElement;
+    if (wrap) wrap.innerHTML = '<div class="z33a-empty">No se pudo cargar la gráfica. Recarga la página.</div>';
+  }
+
   function drawIncomeExpenseChart(buckets) {
-    const canvas = $('#z33-income-expense-chart'); if (!canvas || !window.Chart) return;
+    const canvas = $('#z33-income-expense-chart'); if (!canvas) return;
+    if (!window.Chart) return chartFallback(canvas, 'Chart.js no está disponible (window.Chart es undefined)');
     if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
-    chartInstance = new window.Chart(canvas.getContext('2d'), {
-      type: 'bar',
-      data: { labels: buckets.map((b) => b.label), datasets: [
-        { label: 'Ingresos', data: buckets.map((b) => b.income), backgroundColor: '#d3232d', borderRadius: 5, maxBarThickness: 36 },
-        { label: 'Egresos', data: buckets.map((b) => b.expense), backgroundColor: '#22272d', borderRadius: 5, maxBarThickness: 36 }
-      ] },
-      options: financeChartOptions()
-    });
+    try {
+      chartInstance = new window.Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: { labels: buckets.map((b) => b.label), datasets: [
+          { label: 'Ingresos', data: buckets.map((b) => b.income), backgroundColor: '#d3232d', borderRadius: 5, maxBarThickness: 36 },
+          { label: 'Egresos', data: buckets.map((b) => b.expense), backgroundColor: '#22272d', borderRadius: 5, maxBarThickness: 36 }
+        ] },
+        options: financeChartOptions()
+      });
+    } catch (err) { chartFallback(canvas, err); }
   }
 
   function drawTrendChart(buckets) {
-    const canvas = $('#z33-trend-chart'); if (!canvas || !window.Chart) return;
+    const canvas = $('#z33-trend-chart'); if (!canvas) return;
+    if (!window.Chart) return chartFallback(canvas, 'Chart.js no está disponible (window.Chart es undefined)');
     if (trendChartInstance) { trendChartInstance.destroy(); trendChartInstance = null; }
-    trendChartInstance = new window.Chart(canvas.getContext('2d'), {
-      type: 'line',
-      data: { labels: buckets.map((b) => b.label), datasets: [
-        { label: 'Ingresos', data: buckets.map((b) => b.income), borderColor: '#d3232d', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 },
-        { label: 'Egresos', data: buckets.map((b) => b.expense), borderColor: '#22272d', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }
-      ] },
-      options: financeChartOptions()
-    });
+    try {
+      trendChartInstance = new window.Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: { labels: buckets.map((b) => b.label), datasets: [
+          { label: 'Ingresos', data: buckets.map((b) => b.income), borderColor: '#d3232d', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 },
+          { label: 'Egresos', data: buckets.map((b) => b.expense), borderColor: '#22272d', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }
+        ] },
+        options: financeChartOptions()
+      });
+    } catch (err) { chartFallback(canvas, err); }
   }
 
   function financePayments(body) {
