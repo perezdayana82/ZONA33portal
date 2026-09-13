@@ -429,21 +429,47 @@
   }
   function coachForm(id) {
     const c = id ? state.coaches.find((x) => x.id === id) : {};
+    // photoUrl vive en un closure (no en un <input>): se sube el archivo a
+    // Storage al elegirlo y solo se guarda la URL resultante en `coaches`.
+    // Nunca hay un campo de URL manual.
+    let photoUrl = c.photo_url || null;
     openDrawer(id ? 'Editar coach' : 'Nuevo coach', `
       <form id="z33-coach-form" class="z33a-form">
         <label>Nombre<input id="co-name" required></label>
         <label>Especialidad<input id="co-specialty"></label>
-        <label>Foto URL<input id="co-photo"></label>
+        <label>Foto
+          <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+            <img id="co-photo-preview" src="${esc(photoUrl || './assets/zona33-logo-portal.webp')}" alt="" style="width:72px;height:72px;border-radius:12px;object-fit:cover;background:#f1f1f3;flex:none">
+            <div style="flex:1;min-width:0">
+              <input id="co-photo-file" type="file" accept="image/*">
+              <div id="co-photo-msg" class="z33a-muted" style="margin-top:4px"></div>
+            </div>
+          </div>
+        </label>
         <label>Bio<textarea id="co-bio"></textarea></label>
-        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="co-cancel">Cancelar</button><button class="z33a-btn red">Guardar</button></div>
+        <div class="z33a-actions-row"><button type="button" class="z33a-btn" id="co-cancel">Cancelar</button><button class="z33a-btn red" id="co-save">Guardar</button></div>
       </form>`);
-    $('#co-name').value = c.name || ''; $('#co-specialty').value = c.specialty || ''; $('#co-photo').value = c.photo_url || ''; $('#co-bio').value = c.bio || '';
+    $('#co-name').value = c.name || ''; $('#co-specialty').value = c.specialty || ''; $('#co-bio').value = c.bio || '';
     $('#co-cancel').onclick = closeDrawer;
+    $('#co-photo-file').onchange = async (e) => {
+      const file = e.target.files && e.target.files[0]; if (!file) return;
+      const preview = $('#co-photo-preview'), msg = $('#co-photo-msg'), saveBtn = $('#co-save');
+      preview.src = URL.createObjectURL(file); // preview inmediato, antes de terminar la subida
+      msg.textContent = 'Subiendo foto…'; saveBtn.disabled = true;
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      const path = `${id || 'new'}/${Date.now()}.${ext}`;
+      const up = await db.storage.from('coach-photos').upload(path, file, { upsert: true, contentType: file.type || 'image/jpeg' });
+      saveBtn.disabled = false;
+      if (up.error) { msg.innerHTML = `<div class="z33a-msg err">${esc(up.error.message)}</div>`; return; }
+      photoUrl = db.storage.from('coach-photos').getPublicUrl(path).data.publicUrl;
+      preview.src = photoUrl;
+      msg.textContent = 'Foto lista para guardar.';
+    };
     $('#z33-coach-form').onsubmit = async (e) => {
       e.preventDefault();
       // is_active NO se toca aquí: editar un coach no debe reactivarlo ni
       // desactivarlo. Ese estado solo cambia desde el botón Activar/Desactivar.
-      const payload = { name: $('#co-name').value.trim(), specialty: $('#co-specialty').value.trim() || null, photo_url: $('#co-photo').value.trim() || null, bio: $('#co-bio').value.trim() || null, updated_at: new Date().toISOString() };
+      const payload = { name: $('#co-name').value.trim(), specialty: $('#co-specialty').value.trim() || null, photo_url: photoUrl, bio: $('#co-bio').value.trim() || null, updated_at: new Date().toISOString() };
       const r = id
         ? await db.from('coaches').update(payload).eq('id', id)
         : await db.from('coaches').insert({ ...payload, is_active: true });
