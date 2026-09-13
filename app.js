@@ -226,9 +226,10 @@ function clientHome(c){
 // ---------------------------------------------------------------
 async function bookWeek(c,anchor){
   state.weekAnchor=anchor;
-  const end=addDays(anchor,5);
+  const end=addDays(anchor,6); // semana completa Lunes→Domingo (domingo normalmente sin clases, pero se muestra)
   c.innerHTML=`<div class="hero"><div class="ey">Horarios</div><h2>Elige tu <span>clase.</span></h2><p class="muted">${esc(dateText(anchor))} – ${esc(dateText(end))}</p></div>
     <div class="week-nav"><button class="btn out" id="wkPrev">‹ Anterior</button><button class="btn out" id="wkToday">Hoy</button><button class="btn out" id="wkNext">Siguiente ›</button></div>
+    <div class="notice cal-legend"><b>Importante:</b> las reservas se cierran 1 hora antes del inicio de la clase. A partir de ese momento ya no es posible reservar. Ejemplo: si tu clase es a las 17:00, podrás reservar hasta antes de las 16:00.</div>
     <div id="wkBody"><div class="empty">Cargando horarios…</div></div>`;
   document.querySelector('#wkPrev').onclick=()=>bookWeek(c,addDays(anchor,-7));
   document.querySelector('#wkToday').onclick=()=>bookWeek(c,weekMonday(today()));
@@ -236,38 +237,52 @@ async function bookWeek(c,anchor){
   await loadWeek(anchor);
   renderWeekBody();
 }
-// Misma estructura visual que Agenda del admin (tabla con Hora/Duración/
-// Clase/Coach/Ocupados-Cap./Estado, ver admin.js agendaDay()), adaptada al
-// cliente: se agrega "Lugares" y el botón abre una ficha (drawer) en vez de
-// navegar a otra pantalla. Los datos son exactamente los mismos que carga
+// Calendario visual (no tabla): una columna por día (Lunes→Domingo) y, en
+// cada una, un bloque compacto por clase — misma estructura conceptual que
+// Agenda/Semana del admin, adaptada al cliente. Mismos datos que carga
 // loadWeek() (misma tabla `classes` + misma RPC de disponibilidad) — no hay
-// una segunda fuente ni un segundo calendario.
+// una segunda fuente ni un segundo calendario. El bloque abre el mismo
+// drawer de siempre (openClassDetail) — no se duplica esa lógica.
 function renderWeekBody(){
   const body=document.querySelector('#wkBody');if(!body)return;
-  const days=[0,1,2,3,4,5].map(i=>addDays(state.weekAnchor,i)); // Lunes..Sábado
-  body.innerHTML=days.map(d=>{
-    const rows=state.weekClasses.filter(x=>x.class_date===d);
-    return `<div class="day-group"><div class="day-title">${esc(DOW[new Date(d+'T12:00:00').getDay()])} <small>${esc(dateText(d))}</small></div>${rows.length?`<div class="sched-table-wrap"><table class="sched-table"><thead><tr><th>Hora</th><th>Duración</th><th>Clase</th><th>Coach</th><th>Ocupados/Cap.</th><th>Lugares</th><th>Estado</th><th></th></tr></thead><tbody>${rows.map(x=>schedRowHtml(x)).join('')}</tbody></table></div>`:'<div class="empty">Sin clases este día.</div>'}</div>`;
-  }).join('');
+  const days=[0,1,2,3,4,5,6].map(i=>addDays(state.weekAnchor,i)); // Lunes..Domingo
+  body.innerHTML=`<div class="cal-grid">${days.map(d=>{
+    const rows=state.weekClasses.filter(x=>x.class_date===d).sort((a,b)=>String(a.start_time).localeCompare(String(b.start_time)));
+    return `<div class="cal-day"><div class="cal-day-head">${esc(DOW[new Date(d+'T12:00:00').getDay()])}<small>${esc(dateText(d))}</small></div>${rows.length?rows.map(x=>calBlockHtml(x)).join(''):'<div class="cal-empty">Sin clases</div>'}</div>`;
+  }).join('')}</div>`;
   document.querySelectorAll('[data-open-class]').forEach(b=>b.onclick=()=>openClassDetail(b.dataset.openClass));
 }
-function schedRowHtml(x){
+// Verde <70% ocupado, amarillo >=70% y <100%, rojo =100% — proporcional a
+// la capacidad real de la clase (nunca un número fijo). Es solo un
+// indicador visual: no reemplaza el estado (Llena/Reservado/etc. se sigue
+// mostrando aparte) ni toca las reglas de reserve_class.
+function occupancyTone(booked,capacity){
+  if(capacity<=0)return'ok';
+  const ratio=booked/capacity;
+  if(ratio>=1)return'bad';
+  if(ratio>=0.7)return'warn';
+  return'ok';
+}
+function calBlockHtml(x){
   const st=computeSlotState(x);
   const av=state.availability[x.id];
   const capacity=Number(x.capacity||(av&&av.capacity)||0);
   const booked=av?Number(av.booked_count||0):0;
+  const spots=Math.max(capacity-booked,0);
   const dur=x.duration_minutes||60;
   const coachName=(state.coaches.find(cc=>cc.id===x.coach_id)||{}).name||'Coach Z33';
-  return `<tr>
-    <td><b>${esc(String(x.start_time).slice(0,5))}</b></td>
-    <td>${esc(String(dur))} min</td>
-    <td>${esc(x.class_type||'Functional')}</td>
-    <td>${esc(coachName)}</td>
-    <td>${booked}/${capacity}</td>
-    <td>${Math.max(capacity-booked,0)}</td>
-    <td><span class="pill ${st.tone}">${esc(st.code==='mine'?'Reservado':st.label)}</span></td>
-    <td><button class="btn out" data-open-class="${x.id}">Ver</button></td>
-  </tr>`;
+  // "Reservar" es el estado normal de un bloque disponible — no hace falta
+  // repetirlo como etiqueta aparte; el resto de los estados sí se marcan
+  // explícitamente para que la ocupación nunca sustituya al estado real.
+  const showStatusBadge=st.code!=='available';
+  return `<button type="button" class="cal-block cal-${st.code}" data-open-class="${x.id}" title="${esc(String(dur))} min">
+    <div class="cal-block-time">${esc(String(x.start_time).slice(0,5))}</div>
+    <div class="cal-block-name">${esc(x.class_type||'Functional')}</div>
+    <div class="cal-block-coach">${esc(coachName)}</div>
+    <div class="cal-block-occ"><span class="occ-dot ${occupancyTone(booked,capacity)}"></span>${booked} / ${capacity}</div>
+    <div class="cal-block-spots">${spots} lugar${spots===1?'':'es'}</div>
+    ${showStatusBadge?`<div class="cal-block-status pill ${st.tone}">${esc(st.code==='mine'?'Reservado':st.label).toUpperCase()}</div>`:''}
+  </button>`;
 }
 // Ficha/drawer de una clase — no navega fuera de Horarios (sección 15/16
 // del pedido). Misma lógica de estado (computeSlotState) y misma función
@@ -406,9 +421,16 @@ function reservationStatusPill(s){
   const [tone,label]=map[s]||['warn',s];
   return `<span class="pill ${tone}">${esc(label)}</span>`;
 }
+// "Mis reservas" solo muestra historial reciente (>= hoy - 2 días) para no
+// saturar al cliente con reservas muy antiguas. Es un filtro SOLO de
+// presentación: no borra ni modifica nada en la base — el historial
+// completo sigue intacto para Admin/reportes/auditoría (admin.js lee
+// `reservations` sin este filtro). Se usa la fecha local (today()), igual
+// que el resto del portal.
 function clientReservations(c){
-  const rows=state.reservations.filter(x=>x.classes);
-  c.innerHTML=`<div class="hero"><div class="ey">Cliente</div><h2>Mis <span>reservas.</span></h2></div><div class="card"><div class="list">${rows.length?rows.map(x=>`<div class="item"><div><b>${esc(x.classes?.class_type||'Functional')}</b><small>${esc(dateText(x.classes?.class_date))} · ${esc(String(x.classes?.start_time||'').slice(0,5))} · ${esc(x.coaches?.name||'Coach Z33')}</small></div><div class="actions" style="display:flex;align-items:center;gap:10px">${reservationStatusPill(x.status)}${x.status==='reserved'?`<button class="btn danger" onclick="cancelReservation('${x.id}')">Cancelar</button>`:''}</div></div>`).join(''):'<div class="empty">Aún no tienes reservas.</div>'}</div></div>`;
+  const cutoff=addDays(today(),-2);
+  const rows=state.reservations.filter(x=>x.classes&&x.classes.class_date>=cutoff);
+  c.innerHTML=`<div class="hero"><div class="ey">Cliente</div><h2>Mis <span>reservas.</span></h2></div><div class="card"><div class="list">${rows.length?rows.map(x=>`<div class="item"><div><b>${esc(x.classes?.class_type||'Functional')}</b><small>${esc(dateText(x.classes?.class_date))} · ${esc(String(x.classes?.start_time||'').slice(0,5))} · ${esc(x.coaches?.name||'Coach Z33')}</small></div><div class="actions" style="display:flex;align-items:center;gap:10px">${reservationStatusPill(x.status)}${x.status==='reserved'?`<button class="btn danger" onclick="cancelReservation('${x.id}')">Cancelar</button>`:''}</div></div>`).join(''):'<div class="empty">Aún no tienes reservas recientes.</div>'}</div></div>`;
 }
 function clientMembership(c){
   const m=latestMembership(state.memberships),mStatus=membershipStatus(m),msg=expiryMessage(m);
