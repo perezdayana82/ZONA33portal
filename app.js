@@ -12,10 +12,48 @@ const addDays=(d,n)=>{const x=new Date(d+'T12:00:00');x.setDate(x.getDate()+n);r
 // "semana actual" signifique lo mismo en todo el sistema.
 const weekMonday=(d)=>{const x=new Date(d+'T12:00:00');const w=x.getDay();x.setDate(x.getDate()+(w===0?-6:1-w));return x.toISOString().slice(0,10)};
 const DOW=['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+// ---------------------------------------------------------------
+// WhatsApp ("Elegir plan") — el número real vive en site_content.contact
+// (misma fuente que ya usan el Landing público y Admin → Contacto; ver
+// refresh() más abajo). Nunca se hardcodea otro número aquí.
+// Normalización: solo dígitos, y se antepone "52" únicamente si el valor
+// guardado no lo trae ya (nunca duplicar el código de país).
+// ---------------------------------------------------------------
+const digits=v=>String(v||'').replace(/[^0-9+]/g,'').replace(/^\+/,'');
+function waNumber(raw){
+  const d=digits(raw);
+  if(!d)return'';
+  return d.length===10?'52'+d:d;
+}
+function waLink(raw,message){
+  const num=waNumber(raw);
+  return num?`https://wa.me/${num}?text=${encodeURIComponent(message)}`:null;
+}
+// Hora local del dispositivo (nunca UTC) en formato "3:23 pm".
+function nowLocalTimeLabel(){
+  const d=new Date();
+  let h=d.getHours();
+  const m=String(d.getMinutes()).padStart(2,'0');
+  const ap=h>=12?'pm':'am';
+  h=h%12;if(h===0)h=12;
+  return `${h}:${m} ${ap}`;
+}
+// Mensaje de WhatsApp: si hay sesión de cliente, usa sus datos reales
+// (nombre, correo, hora local) + el nombre real del plan elegido
+// (membership_plans.name — nunca hardcodeado, sirve para cualquier plan).
+// Sin sesión (ej. desde el Landing sin login), mensaje genérico sin datos
+// inventados.
+function buildPlanMessage(planName){
+  if(me&&profile){
+    const first=(profile.full_name||me.email||'').split(' ')[0];
+    return `Hola, soy ${first}.\n\nSon las ${nowLocalTimeLabel()} y mi correo es\n${profile.email||me.email}.\n\nQuiero realizar el pago de la membresía:\n${planName}.\n\n¿Me pueden compartir los datos para realizar el pago?`;
+  }
+  return `Hola, quiero información para contratar el ${planName}.`;
+}
 let me=null,profile=null,role='cliente';
 // Este estado y router solo se usan para los roles "cliente" y "coach".
 // El rol "admin" entrega el control por completo a admin.js (ver boot()).
-const state={classes:[],reservations:[],memberships:[],payments:[],plans:[],coaches:[],weekAnchor:weekMonday(today()),weekClasses:[],availability:{},currentPage:'overview',currentPageArg:null};
+const state={classes:[],reservations:[],memberships:[],payments:[],plans:[],coaches:[],contact:{},weekAnchor:weekMonday(today()),weekClasses:[],availability:{},currentPage:'overview',currentPageArg:null};
 function toast(msg){const x=document.querySelector('#toast');x.textContent=msg;x.classList.add('show');clearTimeout(window.__toast);window.__toast=setTimeout(()=>x.classList.remove('show'),3500)}
 
 // ---------------------------------------------------------------
@@ -122,14 +160,17 @@ async function boot(){
 // Los horarios (classes) NO se cargan aquí — ver loadWeek(): solo se pide
 // la semana que el cliente está viendo, nunca "todas las clases".
 async function refresh(){
-  const [r,m,p,plans,coaches]=await Promise.all([
+  const [r,m,p,plans,coaches,contact]=await Promise.all([
     sb.from('reservations').select('*,classes(class_date,start_time,class_type,capacity),coaches(name)').eq('profile_id',me.id).order('created_at',{ascending:false}),
     sb.from('memberships').select('*,membership_plans(name,price,is_founder_plan)').eq('profile_id',me.id).order('created_at',{ascending:false}),
     sb.from('payments').select('*,membership_plans(name)').eq('profile_id',me.id).order('created_at',{ascending:false}),
     sb.from('membership_plans').select('*').eq('is_active',true).order('sort_order'),
-    sb.from('coaches').select('*').eq('is_active',true).order('name')
+    sb.from('coaches').select('*').eq('is_active',true).order('name'),
+    // Misma fuente que ya usan el Landing público y Admin → Contacto — solo
+    // se lee, nunca se duplica ni se hardcodea un número aparte.
+    sb.from('site_content').select('value').eq('key','contact').maybeSingle()
   ]);
-  Object.assign(state,{reservations:r.data||[],memberships:m.data||[],payments:p.data||[],plans:plans.data||[],coaches:coaches.data||[]});
+  Object.assign(state,{reservations:r.data||[],memberships:m.data||[],payments:p.data||[],plans:plans.data||[],coaches:coaches.data||[],contact:contact.data?.value||{}});
   // Si estamos parados en Agenda (coach) refrescamos también sus clases.
   if(role==='coach'){const {data:c}=await sb.from('classes').select('*').eq('status','scheduled').gte('class_date',today()).order('class_date').order('start_time');state.classes=c||[]}
 }
@@ -147,7 +188,7 @@ async function loadWeek(anchor){
   state.availability=Object.fromEntries((av.data||[]).map(x=>[x.class_id,x]));
 }
 function nav(){if(role==='coach')return[['overview','Dashboard'],['agenda','Agenda'],['coachprofile','Mi perfil']];return[['overview','Dashboard'],['book','Reservar'],['reservations','Mis reservas'],['membership','Membresía'],['payments','Pagos'],['account','Mi perfil']]}
-function renderShell(){app.innerHTML=`<div class="shell"><aside class="side"><a class="brand" href="/"><img src="./assets/zona33-logo-portal.webp" alt="ZONA 33"><strong>ZONA 33</strong></a><div class="role">${esc(role)} · portal</div><nav class="nav" id="nav">${nav().map(([k,v])=>`<button data-page="${k}">${v}</button>`).join('')}</nav><div class="sidefoot">ZONA 33 FUNCTIONAL CLUB<br>Portal operativo</div></aside><main class="main"><header class="top"><div><div class="ey">ZONA 33</div><h1 id="pageTitle">Dashboard</h1></div><div class="top-actions"><span class="pill ok">Conectado</span><button class="btn out" onclick="location.href='/'">Sitio</button><button class="btn danger" onclick="logout()">Salir</button></div></header><section class="content" id="content"></section><div class="mobilebar"><button class="btn red" onclick="go('overview')">Inicio</button><button class="btn" onclick="location.href='/'">Sitio</button><button class="btn danger" onclick="logout()">Salir</button></div></main></div>`;document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>go(b.dataset.page))}
+function renderShell(){app.innerHTML=`<div class="shell"><aside class="side"><a class="brand" href="/"><img src="./assets/zona33-logo-portal.webp" alt="ZONA 33"><strong>ZONA 33</strong></a><div class="role">${esc(role)} · portal</div><nav class="nav" id="nav">${nav().map(([k,v])=>`<button data-page="${k}">${v}</button>`).join('')}</nav><div class="sidefoot">ZONA 33 FUNCTIONAL CLUB<br>Portal operativo</div></aside><main class="main"><header class="top"><div><div class="ey">ZONA 33</div><h1 id="pageTitle">Dashboard</h1></div><div class="top-actions"><span class="pill ok">Conectado</span><button class="btn out" onclick="location.href='/'">Sitio</button><button class="btn danger" onclick="logout()">Salir</button></div></header><section class="content" id="content"></section><div class="mobilebar"><button class="btn red" onclick="go('overview')">Inicio</button><button class="btn" onclick="location.href='/'">Sitio</button><button class="btn danger" onclick="logout()">Salir</button></div></main><div id="clientDrawerOverlay" class="drawer-overlay" onclick="closeClientDrawer()"></div><aside id="clientDrawer" class="drawer"></aside></div>`;document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>go(b.dataset.page))}
 const labels={overview:'Dashboard',book:'Reservar',confirm:'Confirmar reserva',reservations:'Mis reservas',membership:'Membresía',payments:'Pagos',account:'Mi perfil',agenda:'Agenda',coachprofile:'Mi perfil'};
 function go(page,arg){
   state.currentPage=page;state.currentPageArg=arg;
@@ -195,13 +236,79 @@ async function bookWeek(c,anchor){
   await loadWeek(anchor);
   renderWeekBody();
 }
+// Misma estructura visual que Agenda del admin (tabla con Hora/Duración/
+// Clase/Coach/Ocupados-Cap./Estado, ver admin.js agendaDay()), adaptada al
+// cliente: se agrega "Lugares" y el botón abre una ficha (drawer) en vez de
+// navegar a otra pantalla. Los datos son exactamente los mismos que carga
+// loadWeek() (misma tabla `classes` + misma RPC de disponibilidad) — no hay
+// una segunda fuente ni un segundo calendario.
 function renderWeekBody(){
   const body=document.querySelector('#wkBody');if(!body)return;
   const days=[0,1,2,3,4,5].map(i=>addDays(state.weekAnchor,i)); // Lunes..Sábado
   body.innerHTML=days.map(d=>{
     const rows=state.weekClasses.filter(x=>x.class_date===d);
-    return `<div class="day-group"><div class="day-title">${esc(DOW[new Date(d+'T12:00:00').getDay()])} <small>${esc(dateText(d))}</small></div>${rows.length?rows.map(x=>classCardHtml(x)).join(''):'<div class="empty">Sin clases este día.</div>'}</div>`;
+    return `<div class="day-group"><div class="day-title">${esc(DOW[new Date(d+'T12:00:00').getDay()])} <small>${esc(dateText(d))}</small></div>${rows.length?`<div class="sched-table-wrap"><table class="sched-table"><thead><tr><th>Hora</th><th>Duración</th><th>Clase</th><th>Coach</th><th>Ocupados/Cap.</th><th>Lugares</th><th>Estado</th><th></th></tr></thead><tbody>${rows.map(x=>schedRowHtml(x)).join('')}</tbody></table></div>`:'<div class="empty">Sin clases este día.</div>'}</div>`;
   }).join('');
+  document.querySelectorAll('[data-open-class]').forEach(b=>b.onclick=()=>openClassDetail(b.dataset.openClass));
+}
+function schedRowHtml(x){
+  const st=computeSlotState(x);
+  const av=state.availability[x.id];
+  const capacity=Number(x.capacity||(av&&av.capacity)||0);
+  const booked=av?Number(av.booked_count||0):0;
+  const dur=x.duration_minutes||60;
+  const coachName=(state.coaches.find(cc=>cc.id===x.coach_id)||{}).name||'Coach Z33';
+  return `<tr>
+    <td><b>${esc(String(x.start_time).slice(0,5))}</b></td>
+    <td>${esc(String(dur))} min</td>
+    <td>${esc(x.class_type||'Functional')}</td>
+    <td>${esc(coachName)}</td>
+    <td>${booked}/${capacity}</td>
+    <td>${Math.max(capacity-booked,0)}</td>
+    <td><span class="pill ${st.tone}">${esc(st.code==='mine'?'Reservado':st.label)}</span></td>
+    <td><button class="btn out" data-open-class="${x.id}">Ver</button></td>
+  </tr>`;
+}
+// Ficha/drawer de una clase — no navega fuera de Horarios (sección 15/16
+// del pedido). Misma lógica de estado (computeSlotState) y misma función
+// reserve() que ya validan las reglas en el backend; el drawer solo evita
+// que el cliente tenga que salir de la vista de horarios para reservar.
+function openClassDetail(classId){
+  const x=state.weekClasses.find(c=>c.id===classId);if(!x)return;
+  renderClassDetail(x);
+  document.querySelector('#clientDrawerOverlay')?.classList.add('show');
+  document.querySelector('#clientDrawer')?.classList.add('show');
+}
+function closeClientDrawer(){
+  document.querySelector('#clientDrawerOverlay')?.classList.remove('show');
+  document.querySelector('#clientDrawer')?.classList.remove('show');
+}
+function renderClassDetail(x){
+  const drawer=document.querySelector('#clientDrawer');if(!drawer)return;
+  const st=computeSlotState(x);
+  const av=state.availability[x.id];
+  const capacity=Number(x.capacity||(av&&av.capacity)||0);
+  const booked=av?Number(av.booked_count||0):0;
+  const dur=x.duration_minutes||60;
+  const coachName=(state.coaches.find(cc=>cc.id===x.coach_id)||{}).name||'Coach Z33';
+  const action=st.code==='nomembership'
+    ?`<button class="btn red" onclick="closeClientDrawer();go('membership')">Ver planes</button>`
+    :`<button class="btn ${st.disabled?'out':'red'}" ${st.disabled?'disabled':`onclick="reserveFromDrawer('${x.id}')"`}>${esc((st.code==='mine'?'RESERVADO':st.label).toUpperCase())}</button>`;
+  drawer.innerHTML=`<div class="drawer-head"><h3>${esc(x.class_type||'Clase')}</h3><button class="btn out" onclick="closeClientDrawer()">Cerrar</button></div>
+    <div class="list" style="margin-top:14px">
+      <div class="item"><div><b>Fecha</b></div><span>${esc(dateText(x.class_date))}</span></div>
+      <div class="item"><div><b>Hora</b></div><span>${esc(String(x.start_time).slice(0,5))}</span></div>
+      <div class="item"><div><b>Duración</b></div><span>${esc(String(dur))} min</span></div>
+      <div class="item"><div><b>Coach</b></div><span>${esc(coachName)}</span></div>
+      <div class="item"><div><b>Lugares</b></div><span>${Math.max(capacity-booked,0)}/${capacity} disponibles</span></div>
+      <div class="item"><div><b>Estado</b></div><span class="pill ${st.tone}">${esc(st.code==='mine'?'Reservado':st.label)}</span></div>
+    </div>
+    <div style="margin-top:16px">${action}</div>`;
+}
+async function reserveFromDrawer(id){
+  await reserve(id); // reserve() ya valida en backend, refresca datos y renderiza Horarios
+  const x=state.weekClasses.find(c=>c.id===id);
+  if(x&&document.querySelector('#clientDrawer.show'))renderClassDetail(x); // deja el drawer abierto mostrando "Reservado"
 }
 // Prioridad de estados de una clase (idéntica al orden acordado):
 // cancelada/no-programada → ya inició → llena → cierre 1h antes →
@@ -315,10 +422,22 @@ function clientMembership(c){
       </div>
       ${msg?`<div class="notice" style="margin-top:14px">${esc(msg)}</div>`:''}
     </div>`:`<div class="card"><h2>${pending?'Solicitud en revisión.':'Sin membresía activa.'}</h2><p class="muted">${pending?'Tu solicitud está pendiente de confirmación.':'Elige un plan para comenzar.'}</p></div>`}
-    <div class="card"><div class="ey">Planes disponibles</div><div class="list">${state.plans.map(p=>`<div class="item"><div><b>${esc(p.name)}</b><small>${esc(p.description||'')}</small></div><div style="display:grid;gap:8px;justify-items:end"><strong>${money(p.price)}</strong>${p.is_founder_plan?`<span class="pill warn">Solo con código fundador</span>`:`<button class="btn red" onclick="requestMembership('${p.id}')">${pending?'Solicitud pendiente':'Elegir plan'}</button>`}</div></div>`).join('')}</div></div>
+    <div class="card"><div class="ey">Planes disponibles</div><div class="list">${state.plans.map(p=>`<div class="item"><div><b>${esc(p.name)}</b><small>${esc(p.description||'')}</small></div><div style="display:grid;gap:8px;justify-items:end"><strong>${money(p.price)}</strong>${p.is_founder_plan?`<span class="pill warn">Solo con código fundador</span>`:`<button class="btn red" onclick="chooseplanWhatsApp('${p.id}')">Elegir plan</button>`}</div></div>`).join('')}</div></div>
   </div>`;
 }
-async function requestMembership(planId){const active=state.memberships.find(x=>x.status==='active'&&x.end_date>=today());const pending=state.memberships.find(x=>x.status==='pending');if(active)return toast('Ya tienes una membresía activa.');if(pending)return toast('Ya tienes una solicitud de membresía pendiente.');const {error}=await sb.rpc('request_membership',{p_plan_id:planId});if(error)return toast(error.message);await refresh();toast('Solicitud de membresía registrada. Te contactaremos para confirmar tu pago.');go('membership')}
+// "Elegir plan" ya no abre un formulario de pago dentro del portal: abre
+// WhatsApp con el número real de Contacto (state.contact.whatsapp, cargado
+// en refresh() desde site_content — misma fuente que el Landing) y un
+// mensaje con los datos reales del cliente + el nombre real del plan
+// elegido (nunca hardcodeado; sirve igual para Plan Mensual, 6 meses,
+// Fundadores, etc.).
+function chooseplanWhatsApp(planId){
+  const plan=state.plans.find(p=>p.id===planId);
+  const message=buildPlanMessage(plan?.name||'Membresía');
+  const link=waLink(state.contact?.whatsapp,message);
+  if(!link)return toast('No pudimos obtener el número de WhatsApp de Contacto. Intenta más tarde.');
+  window.open(link,'_blank','noopener');
+}
 function clientPayments(c){c.innerHTML=`<div class="hero"><div class="ey">Pagos</div><h2>Mi <span>historial.</span></h2></div><div class="card"><div class="list">${state.payments.length?state.payments.map(x=>`<div class="item"><div><b>${esc(x.membership_plans?.name||'Pago')}</b><small>${esc(new Date(x.created_at).toLocaleDateString('es-MX'))} · ${esc(x.method)}</small></div><div><strong>${money(x.amount)}</strong><span class="pill ${x.status==='approved'?'ok':'warn'}">${esc(x.status)}</span></div></div>`).join(''):'<div class="empty">Aún no hay pagos registrados.</div>'}</div></div>`}
 function clientAccount(c){c.innerHTML=`<div class="hero"><div class="ey">Perfil</div><h2>Mi <span>cuenta.</span></h2></div><div class="card"><form class="form" onsubmit="saveAccount(event)"><div class="field"><label>Nombre completo</label><input id="accName" value="${esc(profile.full_name)}" required></div><div class="field"><label>Teléfono</label><input id="accPhone" value="${esc(profile.phone||'')}"></div><div class="field"><label>Fecha de nacimiento</label><input id="accBirth" type="date" value="${esc(profile.birth_date||'')}"></div><div class="field"><label>Correo</label><input value="${esc(profile.email||me.email)}" disabled></div><button class="btn red">Guardar cambios</button></form></div>`}
 async function saveAccount(e){e.preventDefault();const {data,error}=await sb.from('profiles').update({full_name:accName.value,phone:accPhone.value,birth_date:accBirth.value,updated_at:new Date().toISOString()}).eq('id',me.id).select().single();if(error)return toast(error.message);profile=data;toast('Perfil actualizado.');go('account')}
