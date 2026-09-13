@@ -1,1 +1,0 @@
-Admin enhancements ready: coach editing, admin email settings, monthly Excel export.
