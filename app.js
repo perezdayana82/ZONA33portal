@@ -60,6 +60,10 @@ function buildPlanMessage(planName){
 // esta función lo reemplaza por el logo real en cuanto carga, sin
 // deformarlo (mismo object-fit:contain de siempre).
 const LOGO_FALLBACK='./assets/zona33-logo-correct.svg';
+// URL real de producción del Landing público (proyecto ZONA33, Cloudflare
+// Pages) — misma referencia que ya usa admin.js para "Ver sitio público".
+// Nunca localhost/rama/preview/el propio portal.
+const LANDING_URL='https://zona33.pages.dev/';
 let _brandLogoUrl=null,_brandLogoFetched=false;
 async function applyBrandLogo(){
   if(!_brandLogoFetched){
@@ -210,7 +214,17 @@ async function loadWeek(anchor){
   state.availability=Object.fromEntries((av.data||[]).map(x=>[x.class_id,x]));
 }
 function nav(){if(role==='coach')return[['overview','Dashboard'],['agenda','Agenda'],['coachprofile','Mi perfil']];return[['overview','Dashboard'],['book','Reservar'],['reservations','Mis reservas'],['membership','Membresía'],['payments','Pagos'],['account','Mi perfil']]}
-function renderShell(){app.innerHTML=`<div class="shell"><aside class="side"><a class="brand" href="/"><img src="./assets/zona33-logo-correct.svg" alt="ZONA 33"><strong>ZONA 33</strong></a><div class="role">${esc(role)} · portal</div><nav class="nav" id="nav">${nav().map(([k,v])=>`<button data-page="${k}">${v}</button>`).join('')}</nav><div class="sidefoot">ZONA 33 FUNCTIONAL CLUB<br>Portal operativo</div></aside><main class="main"><header class="top"><div><div class="ey">ZONA 33</div><h1 id="pageTitle">Dashboard</h1></div><div class="top-actions"><span class="pill ok">Conectado</span><button class="btn out" onclick="location.href='/'">Sitio</button><button class="btn danger" onclick="logout()">Salir</button></div></header><section class="content" id="content"></section><div class="mobilebar"><button class="btn red" onclick="go('overview')">Inicio</button><button class="btn" onclick="location.href='/'">Sitio</button><button class="btn danger" onclick="logout()">Salir</button></div></main><div id="clientDrawerOverlay" class="drawer-overlay" onclick="closeClientDrawer()"></div><aside id="clientDrawer" class="drawer"></aside></div>`;document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>go(b.dataset.page));applyBrandLogo()}
+// Navegación móvil: mismo <aside class="side"> de siempre (misma marca,
+// mismo <nav>, mismos items — nunca una segunda lista de navegación),
+// pero en pantallas chicas se comporta como el drawer lateral que ya usa
+// Admin (hamburguesa + overlay). En escritorio no cambia nada (el CSS de
+// .side/.menu-btn/.side-overlay solo actúa dentro de la media query
+// móvil) — así TODO lo que existe en el nav (Reservar, Mis reservas,
+// Membresía, Pagos, Mi perfil, Agenda, etc.) sigue siendo alcanzable en
+// celular, no solo "Inicio".
+function openMobileNav(){document.querySelector('#side')?.classList.add('show');document.querySelector('#sideOverlay')?.classList.add('show')}
+function closeMobileNav(){document.querySelector('#side')?.classList.remove('show');document.querySelector('#sideOverlay')?.classList.remove('show')}
+function renderShell(){app.innerHTML=`<div class="shell"><aside class="side" id="side"><a class="brand" href="/"><img src="./assets/zona33-logo-correct.svg" alt="ZONA 33"><strong>ZONA 33</strong></a><div class="role">${esc(role)} · portal</div><nav class="nav" id="nav">${nav().map(([k,v])=>`<button data-page="${k}">${v}</button>`).join('')}</nav><div class="sidefoot">ZONA 33 FUNCTIONAL CLUB<br>Portal operativo</div></aside><div id="sideOverlay" class="side-overlay" onclick="closeMobileNav()"></div><main class="main"><header class="top"><div class="top-left"><button class="menu-btn" id="menuBtn" aria-label="Menú" type="button">☰</button><div><div class="ey">ZONA 33</div><h1 id="pageTitle">Dashboard</h1></div></div><div class="top-actions"><span class="pill ok">Conectado</span><button class="btn out" onclick="window.open('${LANDING_URL}','_blank','noopener')">Sitio</button><button class="btn danger" onclick="logout()">Salir</button></div></header><section class="content" id="content"></section></main><div id="clientDrawerOverlay" class="drawer-overlay" onclick="closeClientDrawer()"></div><aside id="clientDrawer" class="drawer"></aside></div>`;document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{go(b.dataset.page);closeMobileNav()});document.querySelector('#menuBtn').onclick=openMobileNav;applyBrandLogo()}
 const labels={overview:'Dashboard',book:'Reservar',confirm:'Confirmar reserva',reservations:'Mis reservas',membership:'Membresía',payments:'Pagos',account:'Mi perfil',agenda:'Agenda',coachprofile:'Mi perfil'};
 function go(page,arg){
   state.currentPage=page;state.currentPageArg=arg;
@@ -248,6 +262,7 @@ function clientHome(c){
 // ---------------------------------------------------------------
 async function bookWeek(c,anchor){
   state.weekAnchor=anchor;
+  state.mobileDayIdx=null; // recalcular "día más cercano a hoy" para la nueva semana
   const end=addDays(anchor,6); // semana completa Lunes→Domingo (domingo normalmente sin clases, pero se muestra)
   c.innerHTML=`<div class="hero"><div class="ey">Horarios</div><h2>Elige tu <span>clase.</span></h2><p class="muted">${esc(dateText(anchor))} – ${esc(dateText(end))}</p></div>
     <div class="week-nav"><button class="btn out" id="wkPrev">‹ Anterior</button><button class="btn out" id="wkToday">Hoy</button><button class="btn out" id="wkNext">Siguiente ›</button></div>
@@ -268,11 +283,57 @@ async function bookWeek(c,anchor){
 function renderWeekBody(){
   const body=document.querySelector('#wkBody');if(!body)return;
   const days=[0,1,2,3,4,5,6].map(i=>addDays(state.weekAnchor,i)); // Lunes..Domingo
-  body.innerHTML=`<div class="cal-grid">${days.map(d=>{
+  // Escritorio: calendario de 7 columnas, sin cambios.
+  const desktopHtml=`<div class="cal-grid">${days.map(d=>{
     const rows=state.weekClasses.filter(x=>x.class_date===d).sort((a,b)=>String(a.start_time).localeCompare(String(b.start_time)));
     return `<div class="cal-day"><div class="cal-day-head">${esc(DOW[new Date(d+'T12:00:00').getDay()])}<small>${esc(dateText(d))}</small></div>${rows.length?rows.map(x=>calBlockHtml(x)).join(''):'<div class="cal-empty">Sin clases</div>'}</div>`;
   }).join('')}</div>`;
-  document.querySelectorAll('[data-open-class]').forEach(b=>b.onclick=()=>openClassDetail(b.dataset.openClass));
+  // Móvil: MISMOS datos (state.weekClasses), presentados como agenda de un
+  // solo día con pestañas para cambiar de día + línea de tiempo por hora —
+  // nunca una lista plana (ver renderMobileTimeline). El CSS decide cuál de
+  // las dos estructuras se ve según el ancho de pantalla.
+  if(state.mobileDayIdx==null||state.mobileDayIdx<0||state.mobileDayIdx>6){
+    const todayIdx=days.indexOf(today());
+    state.mobileDayIdx=todayIdx>=0?todayIdx:0;
+  }
+  const mobileHtml=`<div class="cal-mobile">
+    <div class="cal-mobile-tabs">${days.map((d,i)=>`<button type="button" class="cal-mobile-tab ${i===state.mobileDayIdx?'active':''}" data-day-idx="${i}">${esc(DOW[new Date(d+'T12:00:00').getDay()].slice(0,3))}<small>${new Date(d+'T12:00:00').getDate()}</small></button>`).join('')}</div>
+    <div id="calMobileTimeline"></div>
+  </div>`;
+  body.innerHTML=desktopHtml+mobileHtml;
+  document.querySelectorAll('.cal-grid [data-open-class]').forEach(b=>b.onclick=()=>openClassDetail(b.dataset.openClass));
+  document.querySelectorAll('[data-day-idx]').forEach(b=>b.onclick=()=>{state.mobileDayIdx=Number(b.dataset.dayIdx);renderWeekBody()});
+  renderMobileTimeline(state.mobileDayIdx);
+}
+const timeToMinutes=t=>{const [h,m]=String(t).slice(0,5).split(':').map(Number);return h*60+(m||0)};
+// Agenda móvil de un día: misma tabla `classes`/misma disponibilidad que ya
+// cargó loadWeek() para toda la semana — solo se filtra por el día
+// seleccionado y se posiciona cada clase en una rejilla de cuartos de hora
+// (rail de horas a la izquierda + bloques a la derecha), para conservar
+// visualmente la relación HORA → CLASE en vez de una lista plana. El rango
+// de horas se calcula de las clases reales de ese día (nunca un horario
+// fijo hardcodeado) para no dejar espacio en blanco de más.
+function renderMobileTimeline(dayIdx){
+  const container=document.querySelector('#calMobileTimeline');if(!container)return;
+  const d=addDays(state.weekAnchor,dayIdx);
+  const rows=state.weekClasses.filter(x=>x.class_date===d).sort((a,b)=>String(a.start_time).localeCompare(String(b.start_time)));
+  if(!rows.length){container.innerHTML='<div class="cal-empty">Sin clases este día.</div>';return}
+  const starts=rows.map(x=>timeToMinutes(x.start_time));
+  const ends=rows.map(x=>timeToMinutes(x.start_time)+(x.duration_minutes||60));
+  const startHour=Math.max(0,Math.floor(Math.min(...starts)/60)-1);
+  const endHour=Math.min(24,Math.ceil(Math.max(...ends)/60)+1);
+  const totalRows=Math.max(4,(endHour-startHour)*4); // cuartos de hora
+  const hourLabels=[];
+  for(let h=startHour;h<endHour;h++)hourLabels.push(`<div class="cal-timeline-hour" style="grid-row:${(h-startHour)*4+1} / span 4">${String(h).padStart(2,'0')}:00</div>`);
+  const blocks=rows.map(x=>{
+    const startMin=timeToMinutes(x.start_time)-startHour*60;
+    const durMin=x.duration_minutes||60;
+    const rowStart=Math.round(startMin/15)+1;
+    const rowSpan=Math.max(2,Math.round(durMin/15));
+    return `<div class="cal-timeline-slot" style="grid-row:${rowStart} / span ${rowSpan}">${calBlockHtml(x)}</div>`;
+  }).join('');
+  container.innerHTML=`<div class="cal-timeline" style="grid-template-rows:repeat(${totalRows},minmax(16px,auto))">${hourLabels.join('')}${blocks}</div>`;
+  document.querySelectorAll('#calMobileTimeline [data-open-class]').forEach(b=>b.onclick=()=>openClassDetail(b.dataset.openClass));
 }
 // Verde <70% ocupado, amarillo >=70% y <100%, rojo =100% — proporcional a
 // la capacidad real de la clase (nunca un número fijo). Es solo un
@@ -466,7 +527,7 @@ function clientMembership(c){
       </div>
       ${msg?`<div class="notice" style="margin-top:14px">${esc(msg)}</div>`:''}
     </div>`:`<div class="card"><h2>${pending?'Solicitud en revisión.':'Sin membresía activa.'}</h2><p class="muted">${pending?'Tu solicitud está pendiente de confirmación.':'Elige un plan para comenzar.'}</p></div>`}
-    <div class="card"><div class="ey">Planes disponibles</div><div class="list">${state.plans.map(p=>`<div class="item"><div><b>${esc(p.name)}</b><small>${esc(p.description||'')}</small></div><div style="display:grid;gap:8px;justify-items:end"><strong>${money(p.price)}</strong>${p.is_founder_plan?`<span class="pill warn">Solo con código fundador</span>`:`<button class="btn red" onclick="chooseplanWhatsApp('${p.id}')">Elegir plan</button>`}</div></div>`).join('')}</div></div>
+    <div class="card"><div class="ey">Planes disponibles</div><div class="list">${state.plans.map(p=>`<div class="item"><div><b>${esc(p.name)}</b><small>${esc(p.description||'')}</small></div><div class="plan-price-block"><strong>${money(p.price)}</strong>${p.is_founder_plan?`<span class="pill warn">Solo con código fundador</span>`:`<button class="btn red" onclick="chooseplanWhatsApp('${p.id}')">Elegir plan</button>`}</div></div>`).join('')}</div></div>
   </div>`;
 }
 // "Elegir plan" ya no abre un formulario de pago dentro del portal: abre

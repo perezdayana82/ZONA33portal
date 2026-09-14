@@ -18,6 +18,13 @@
 
   const SB_URL = 'https://ponhllwbvhtczaphfdgw.supabase.co';
   const SB_KEY = 'sb_publishable_okgoHkX2YZFtQ9P72ckztQ_jiCuWN-6';
+  // URL real de producción del Landing público (proyecto ZONA33, Cloudflare
+  // Pages) — la misma que ese proyecto usa para referirse a sí mismo (ver
+  // _worker.js). "Ver sitio público" y "Sitio" usan primero la URL que el
+  // admin haya configurado en General/Marca (state.site.brand.public_url);
+  // si no hay ninguna configurada, caen aquí — nunca a localhost, una
+  // rama, o el propio portal.
+  const LANDING_URL = 'https://zona33.pages.dev/';
   // Reutiliza el cliente único creado por app.js (evita instancias GoTrueClient
   // duplicadas); solo crea uno propio si admin.js se cargara de forma aislada.
   const db = window.__ZONA33_SB || window.supabase.createClient(SB_URL, SB_KEY, {
@@ -195,7 +202,7 @@
     $('#z33-open-menu').onclick = openMenu;
     $('#z33-menu-overlay').onclick = closeMenu;
     $('#z33-drawer-overlay').onclick = (e) => { if (e.target.id === 'z33-drawer-overlay') closeDrawer(); };
-    $('#z33-goto-site').onclick = () => { location.href = '/'; };
+    $('#z33-goto-site').onclick = () => window.open((state.site.brand || {}).public_url || LANDING_URL, '_blank', 'noopener');
     $('#z33-logout').onclick = async () => { await db.auth.signOut(); location.reload(); };
     bindMenu();
   }
@@ -1167,11 +1174,7 @@
       <p class="z33a-muted" style="margin:8px 0 0">"Ver sitio público" abre el sitio real en una pestaña nueva — no es una vista previa interna. Los cambios que guardes aquí se reflejan ahí en cuanto el visitante recarga la página.</p>
       <div id="z33-landing-body" style="margin-top:16px"></div>`;
     $$('[data-landing-tab]').forEach((b) => b.onclick = () => { state.landingTab = b.dataset.landingTab; landing(); });
-    $('#z33-landing-preview').onclick = () => {
-      const url = (state.site.brand || {}).public_url;
-      if (!url) return alert('Configura la "URL del sitio público" en General / Marca para usar "Ver sitio público".');
-      window.open(url, '_blank');
-    };
+    $('#z33-landing-preview').onclick = () => window.open((state.site.brand || {}).public_url || LANDING_URL, '_blank', 'noopener');
     landingTabBody();
   }
   function landingTabBody() {
