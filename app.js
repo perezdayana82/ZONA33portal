@@ -391,7 +391,9 @@ function renderClassDetail(x){
   const coachName=(state.coaches.find(cc=>cc.id===x.coach_id)||{}).name||'Coach Z33';
   const action=st.code==='nomembership'
     ?`<button class="btn red" onclick="closeClientDrawer();go('membership')">Ver planes</button>`
-    :`<button class="btn ${st.disabled?'out':'red'}" ${st.disabled?'disabled':`onclick="reserveFromDrawer('${x.id}')"`}>${esc((st.code==='mine'?'RESERVADO':st.label).toUpperCase())}</button>`;
+    :st.code==='inactive'
+      ?inactiveReserveActionHtml(x)
+      :`<button class="btn ${st.disabled?'out':'red'}" ${st.disabled?'disabled':`onclick="reserveFromDrawer('${x.id}')"`}>${esc((st.code==='mine'?'RESERVADO':st.label).toUpperCase())}</button>`;
   drawer.innerHTML=`<div class="drawer-head"><h3>${esc(x.class_type||'Clase')}</h3><button class="btn out" onclick="closeClientDrawer()">Cerrar</button></div>
     <div class="list" style="margin-top:14px">
       <div class="item"><div><b>Fecha</b></div><span>${esc(dateText(x.class_date))}</span></div>
@@ -430,6 +432,24 @@ function computeSlotState(x){
   if(profile.is_active===false)return{code:'inactive',label:'Cuenta inactiva',disabled:true,tone:'bad'};
   return{code:'available',label:'Reservar',disabled:false,tone:'ok'};
 }
+// Cuenta registrada pero aún no activada/autorizada (profiles.is_active
+// = false, ver computeSlotState): en vez de solo mostrar el botón
+// deshabilitado, se ofrece continuar por WhatsApp para pedir la
+// activación. Mismo número real de Contacto que ya usa "Elegir plan"
+// (state.contact.whatsapp, nunca hardcodeado); nombre de la clase y
+// fecha son siempre los reales de ESA clase (x.class_type/x.class_date)
+// — nunca inventados ni de otra clase. Si no hay WhatsApp configurado en
+// Contacto, se mantiene el botón deshabilitado de siempre.
+function inactiveReserveMessage(x){
+  const dateLabel=x.class_date?new Date(x.class_date+'T12:00:00').toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'}).replace(',',''):'';
+  return `Hola ZONA 33. Quiero reservar la clase de ${x.class_type||'Functional'} del ${dateLabel}. ¿Me podrían ayudar a activar mi cuenta para poder reservar? Gracias.`;
+}
+function inactiveReserveActionHtml(x){
+  const link=waLink(state.contact?.whatsapp,inactiveReserveMessage(x));
+  return link
+    ?`<a class="btn red" href="${esc(link)}" target="_blank" rel="noopener">ACTIVAR CUENTA</a>`
+    :`<button class="btn out" disabled>Cuenta inactiva</button>`;
+}
 function classCardHtml(x){
   const st=computeSlotState(x);
   const av=state.availability[x.id];
@@ -439,7 +459,9 @@ function classCardHtml(x){
   const coachName=(state.coaches.find(cc=>cc.id===x.coach_id)||{}).name||'Coach Z33';
   const action=st.code==='nomembership'
     ?`<div style="display:grid;gap:6px"><button class="btn out" disabled>${esc(st.label)}</button><button class="btn red" onclick="go('membership')">Ver planes</button></div>`
-    :`<button class="btn ${st.disabled?'out':'red'}" ${st.disabled?'disabled':`onclick="reserve('${x.id}')"`}>${esc((st.code==='mine'?'RESERVADO':st.label).toUpperCase())}</button>`;
+    :st.code==='inactive'
+      ?inactiveReserveActionHtml(x)
+      :`<button class="btn ${st.disabled?'out':'red'}" ${st.disabled?'disabled':`onclick="reserve('${x.id}')"`}>${esc((st.code==='mine'?'RESERVADO':st.label).toUpperCase())}</button>`;
   return `<div class="class-card">
     <div class="class-card-main"><div class="class-time">${esc(String(x.start_time).slice(0,5))}</div><div class="class-info"><b>${esc(x.class_type||'Functional')}</b><small>${esc(String(dur))} min · Coach: ${esc(coachName)}</small></div></div>
     <div class="class-card-side"><span class="pill ${st.tone}">${esc(st.code==='mine'?'Reservado':st.code==='available'?`${Math.max(capacity-booked,0)}/${capacity} lugares`:st.label)}</span>${st.code!=='mine'&&st.code!=='available'?`<small class="muted">${booked}/${capacity} lugares</small>`:''}${action}</div>
