@@ -2004,9 +2004,14 @@
       </div>`;
     $('#bk-period').onchange = (e) => { state.backupPeriod = e.target.value; };
     $('#bk-download').onclick = async () => {
-      const msg = $('#bk-msg');
-      const period = $('#bk-period').value;
+      const btn = $('#bk-download'), sel = $('#bk-period'), msg = $('#bk-msg');
+      const period = sel.value;
+      // Evita que un doble clic mientras se genera dispare dos respaldos
+      // (dos subidas al bucket + dos filas en el historial para la misma
+      // descarga).
+      btn.disabled = true; sel.disabled = true;
       msg.textContent = 'Generando respaldo…';
+      let downloaded = false;
       try {
         const dataset = buildBackupDataset(period);
         const wb = await buildBackupWorkbook(dataset);
@@ -2018,12 +2023,15 @@
           ? `ZONA33_Respaldo_Todo_${today()}.xlsx`
           : `ZONA33_Respaldo_${monthRangeFor(period === 'mes_anterior' ? -1 : 0).label}.xlsx`;
 
-        // 1) Descarga inmediata en el navegador del admin.
+        // 1) Descarga inmediata en el navegador del admin — esto ya es la
+        // entrega principal; si el paso 2 (historial) falla después, el
+        // archivo que el admin ya tiene en su equipo sigue siendo válido.
         const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); a.remove();
         URL.revokeObjectURL(url);
+        downloaded = true;
 
         // 2) Copia en el bucket privado + registro en el historial, mismo
         // patrón que un respaldo automático (bucket "backups", tabla
@@ -2041,7 +2049,12 @@
         msg.innerHTML = '<div class="z33a-msg ok">Respaldo descargado y guardado en el historial.</div>';
         await route('backups');
       } catch (err) {
-        msg.innerHTML = `<div class="z33a-msg err">${esc(err.message || String(err))}</div>`;
+        // Si ya se alcanzó a descargar el archivo, el error es solo del
+        // paso 2 (copia/historial) — decirlo así evita que el admin piense
+        // que se quedó sin su respaldo cuando en realidad ya lo tiene.
+        const prefix = downloaded ? 'El archivo sí se descargó, pero no se pudo guardar en el historial: ' : '';
+        msg.innerHTML = `<div class="z33a-msg err">${esc(prefix + (err.message || String(err)))}</div>`;
+        btn.disabled = false; sel.disabled = false;
       }
     };
     $$('[data-backup-dl]').forEach((b) => b.onclick = async () => {
