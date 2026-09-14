@@ -93,23 +93,26 @@
     const style = document.createElement('style');
     style.id = 'z33AdminStyles';
     style.textContent = `
-      #z33-admin{min-height:100vh;background:#f7f7f8;color:#17181b;font-family:Inter,Arial,sans-serif}
+      /* Tema ZONA 33: negro/gris oscuro/gris medio/blanco/rojo (acento).
+         Mismas variables que portal.css (comparten document.head, misma
+         página) — una sola paleta para Admin y Portal Cliente. */
+      #z33-admin{min-height:100vh;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif}
       #z33-admin *{box-sizing:border-box}
-      .z33a-top{height:72px;background:#fff;border-bottom:1px solid #e5e5e8;display:flex;align-items:center;padding:0 26px;gap:12px;position:sticky;top:0;z-index:30}
-      .z33a-menu{width:38px;height:38px;border:0;background:#fff;border-radius:9px;display:grid;place-items:center;font-size:23px;color:#25272b;cursor:pointer}
-      .z33a-menu:hover{background:#f1f1f3}.z33a-title{font-size:20px;font-weight:650}.z33a-date{font-size:14px;color:#7d828a}
-      .z33a-actions{margin-left:auto;display:flex;gap:7px}.z33a-btn{min-height:40px;border:1px solid #dedfe3;background:#fff;color:#36393f;border-radius:8px;padding:0 13px;font-size:11px;font-weight:650;cursor:pointer}.z33a-btn.red{background:#d3232d;border-color:#d3232d;color:#fff}.z33a-btn.danger{background:#fff5f4;border-color:#efd0cc;color:#b42318}.z33a-btn:disabled{opacity:.45;cursor:not-allowed}
-      .z33a-content{max-width:1120px;margin:0 auto;padding:25px 28px 54px}.z33a-kicker{font-size:10px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#c91428}.z33a-h2{font-size:31px;line-height:1.05;margin:5px 0;font-weight:720;letter-spacing:-.035em}.z33a-sub{font-size:13px;color:#7c8189}.z33a-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:18px}.z33a-head-actions{display:flex;gap:7px;flex-wrap:wrap}
-      .z33a-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.z33a-stat{background:#fff;border:1px solid #e1e2e5;border-radius:16px;padding:20px;min-height:120px}.z33a-icon{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-size:18px}.z33a-icon.red{background:#fff1f1;color:#d3232d}.z33a-icon.amber{background:#fff8e9;color:#b87900}.z33a-icon.green{background:#e9fbf3;color:#12a46b}.z33a-icon.gray{background:#f1f1f3;color:#34383e}.z33a-value{font-size:28px;line-height:1.1;font-weight:600;margin-top:12px;letter-spacing:-.03em}.z33a-label{font-size:12.5px;color:#80848c;margin-top:6px}
-      .z33a-chart{margin-top:16px;background:#fff;border:1px solid #e1e2e5;border-radius:16px;padding:22px}.z33a-chart-title{font-size:16px;font-weight:650;margin-bottom:4px}.z33a-chart-wrap{position:relative;height:220px;margin-top:14px}
-      .z33a-tabs{display:flex;gap:2px;border-bottom:1px solid #e2e3e6;margin:22px 0 16px;overflow:auto}.z33a-tab{border:0;background:transparent;padding:11px 13px;font-size:12px;font-weight:650;color:#777b83;border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}.z33a-tab.active{color:#c61d28;border-color:#d9272f}
-      .z33a-card{background:#fff;border:1px solid #e1e2e5;border-radius:14px;padding:18px}.z33a-grid2{display:grid;grid-template-columns:1.45fr 1fr;gap:16px}.z33a-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.z33a-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}.z33a-search{height:40px;min-width:280px;border:1px solid #dedfe3;border-radius:9px;padding:0 12px;background:#fff;font-size:12px}.z33a-filter-row{display:flex;gap:6px;flex-wrap:wrap}.z33a-filter{height:36px;border:1px solid #dedfe3;border-radius:8px;background:#fff;padding:0 11px;font-size:11px;cursor:pointer}.z33a-filter.active{background:#fff0f0;border-color:#e7a9ad;color:#b71f28;font-weight:700}
-      .z33a-table{overflow:auto;border:1px solid #e1e2e5;border-radius:12px;background:#fff}.z33a-table table{width:100%;min-width:760px;border-collapse:collapse}.z33a-table th{background:#fafafa;color:#777b83;text-transform:uppercase;font-size:9px;letter-spacing:.06em;text-align:left;padding:11px;border-bottom:1px solid #ececef}.z33a-table td{padding:12px 11px;border-bottom:1px solid #f0f0f2;font-size:12px;vertical-align:middle}.z33a-table tr:last-child td{border-bottom:0}.z33a-muted{font-size:10px;color:#858991;margin-top:3px}.z33a-pill{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:9px;font-weight:800}.z33a-pill.ok{background:#e9f8f1;color:#14764c}.z33a-pill.warn{background:#fff7df;color:#866300}.z33a-pill.bad{background:#fdecef;color:#b4232e}.z33a-pill.off{background:#eef0f3;color:#656b73}
-      .z33a-list{display:grid;gap:8px}.z33a-item{background:#fafbfc;border:1px solid #eceef0;border-radius:10px;padding:12px;display:flex;align-items:center;justify-content:space-between;gap:10px}.z33a-empty{padding:34px;text-align:center;color:#8a8e95;font-size:12px}.z33a-actions-row{display:flex;gap:6px;flex-wrap:wrap}
-      .z33a-menu-overlay{position:fixed;inset:0;background:rgba(20,22,26,.28);z-index:80;display:none}.z33a-menu-overlay.show{display:block}.z33a-menu-drawer{position:fixed;left:0;top:0;bottom:0;width:305px;background:#fff;z-index:81;box-shadow:18px 0 48px rgba(0,0,0,.12);padding:24px;transform:translateX(-100%);transition:transform .18s}.z33a-menu-drawer.show{transform:translateX(0)}.z33a-menu-title{font-size:20px;font-weight:700}.z33a-menu-sub{font-size:12px;color:#858991;margin-top:4px}.z33a-menu-list{display:grid;gap:4px;margin-top:22px}.z33a-menu-item{height:45px;border:0;background:#fff;border-radius:9px;text-align:left;padding:0 12px;font-size:13px;font-weight:600;color:#555a62;cursor:pointer}.z33a-menu-item:hover,.z33a-menu-item.active{background:#fff0f0;color:#b71e28}
-      .z33a-drawer-overlay{position:fixed;inset:0;background:rgba(20,22,26,.28);z-index:90;display:none}.z33a-drawer-overlay.show{display:block}.z33a-drawer{position:fixed;top:0;right:0;bottom:0;width:min(500px,95vw);background:#fff;z-index:91;box-shadow:-18px 0 48px rgba(0,0,0,.15);padding:22px;overflow:auto;transform:translateX(100%);transition:transform .18s}.z33a-drawer.show{transform:translateX(0)}.z33a-drawer-head{display:flex;align-items:flex-start;gap:10px}.z33a-drawer-head h3{margin:0;font-size:20px}.z33a-drawer-head .z33a-btn{margin-left:auto}.z33a-form{display:grid;gap:12px;margin-top:18px}.z33a-form label{font-size:10px;font-weight:700;color:#727780}.z33a-form input,.z33a-form select,.z33a-form textarea{width:100%;margin-top:6px;padding:11px;border:1px solid #dfe1e5;border-radius:9px;background:#fff;font-size:12px}.z33a-form textarea{min-height:80px;resize:vertical}.z33a-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.z33a-check{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:#36393f}.z33a-check input{width:auto;margin:0}.z33a-msg{font-size:11px;padding:9px 11px;border-radius:8px}.z33a-msg.err{background:#fff3f2;color:#b42318;border:1px solid #f2c7c3}.z33a-msg.ok{background:#eefaf4;color:#14764d;border:1px solid #c8ead9}
-      .z33a-calendar{background:#fff;border:1px solid #e1e2e5;border-radius:14px;overflow:auto}.z33a-cal-inner{min-width:980px}.z33a-week-head{display:grid;grid-template-columns:54px repeat(7,1fr);background:#fafafa;border-bottom:1px solid #e6e7e9}.z33a-week-head>div{padding:9px 3px;text-align:center;border-left:1px solid #f0f1f2}.z33a-week-head small{font-size:8px;color:#80858d;text-transform:uppercase}.z33a-week-head b{display:block;margin-top:3px;font-size:13px}.z33a-week-body{display:grid;grid-template-columns:54px 1fr}.z33a-time-col,.z33a-day-col{height:850px;position:relative}.z33a-time{position:absolute;right:7px;transform:translateY(-6px);font-size:8px;color:#959ba2}.z33a-day-cols{display:grid;grid-template-columns:repeat(7,1fr)}.z33a-day-col{border-left:1px solid #f0f1f2}.z33a-hour{position:absolute;left:0;right:0;border-top:1px solid #f4f4f5}.z33a-class{position:absolute;left:4px;right:4px;border:1px solid #dfe2e5;border-left:3px solid #2d3136;background:#fff;border-radius:7px;padding:5px;cursor:pointer;overflow:hidden}.z33a-class.full{border-left-color:#c91428;background:#fff1f1}.z33a-class.master{border-left-color:#b87900;background:#fffaf0}.z33a-class strong{display:block;font-size:9px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.z33a-class small{display:block;color:#858b93;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .z33a-hero{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}.z33a-hero h2{font-size:32px;margin:4px 0}.z33a-big-actions{display:grid;grid-template-columns:repeat(2,minmax(150px,1fr));gap:10px;min-width:340px}.z33a-action-card{background:#fff;border:1px solid #e1e2e5;border-radius:14px;padding:16px;text-align:left;cursor:pointer}.z33a-action-card b{display:block;font-size:13px}.z33a-action-card span{display:block;color:#858a92;font-size:11px;margin-top:5px}
+      .z33a-top{height:72px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 26px;gap:12px;position:sticky;top:0;z-index:30}
+      .z33a-menu{width:38px;height:38px;border:0;background:var(--panel-alt);border-radius:9px;display:grid;place-items:center;font-size:23px;color:var(--text);cursor:pointer}
+      .z33a-menu:hover{background:var(--border)}.z33a-title{font-size:20px;font-weight:650}.z33a-date{font-size:14px;color:var(--text-dim)}
+      .z33a-actions{margin-left:auto;display:flex;gap:7px}.z33a-btn{min-height:40px;border:1px solid var(--border);background:var(--panel-alt);color:var(--text);border-radius:8px;padding:0 13px;font-size:11px;font-weight:650;cursor:pointer}.z33a-btn.red{background:var(--red);border-color:var(--red);color:#fff}.z33a-btn.danger{background:var(--panel-alt);border-color:#4a2321;color:var(--bad-fg)}.z33a-btn:disabled{opacity:.45;cursor:not-allowed}
+      .z33a-content{max-width:1120px;margin:0 auto;padding:25px 28px 54px}.z33a-kicker{font-size:10px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--red)}.z33a-h2{font-size:31px;line-height:1.05;margin:5px 0;font-weight:720;letter-spacing:-.035em}.z33a-sub{font-size:13px;color:var(--text-dim)}.z33a-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:18px}.z33a-head-actions{display:flex;gap:7px;flex-wrap:wrap}
+      .z33a-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.z33a-stat{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:20px;min-height:120px}.z33a-icon{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;font-size:18px}.z33a-icon.red{background:var(--bad-bg);color:var(--red)}.z33a-icon.amber{background:var(--warn-bg);color:var(--warn-fg)}.z33a-icon.green{background:var(--ok-bg);color:var(--ok-fg)}.z33a-icon.gray{background:var(--panel-alt);color:var(--text-dim)}.z33a-value{font-size:28px;line-height:1.1;font-weight:600;margin-top:12px;letter-spacing:-.03em}.z33a-label{font-size:12.5px;color:var(--text-dim);margin-top:6px}
+      .z33a-chart{margin-top:16px;background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:22px}.z33a-chart-title{font-size:16px;font-weight:650;margin-bottom:4px}.z33a-chart-wrap{position:relative;height:220px;margin-top:14px}
+      .z33a-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:22px 0 16px;overflow:auto}.z33a-tab{border:0;background:transparent;padding:11px 13px;font-size:12px;font-weight:650;color:var(--text-dim);border-bottom:2px solid transparent;white-space:nowrap;cursor:pointer}.z33a-tab.active{color:var(--red);border-color:var(--red)}
+      .z33a-card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px}.z33a-grid2{display:grid;grid-template-columns:1.45fr 1fr;gap:16px}.z33a-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.z33a-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}.z33a-search{height:40px;min-width:280px;border:1px solid var(--border);border-radius:9px;padding:0 12px;background:var(--panel-alt);color:var(--text);font-size:12px}.z33a-filter-row{display:flex;gap:6px;flex-wrap:wrap}.z33a-filter{height:36px;border:1px solid var(--border);border-radius:8px;background:var(--panel-alt);color:var(--text);padding:0 11px;font-size:11px;cursor:pointer}.z33a-filter.active{background:var(--bad-bg);border-color:var(--red);color:var(--red);font-weight:700}
+      .z33a-table{overflow:auto;border:1px solid var(--border);border-radius:12px;background:var(--panel)}.z33a-table table{width:100%;min-width:760px;border-collapse:collapse}.z33a-table th{background:var(--panel-alt);color:var(--text-dim);text-transform:uppercase;font-size:9px;letter-spacing:.06em;text-align:left;padding:11px;border-bottom:1px solid var(--border)}.z33a-table td{padding:12px 11px;border-bottom:1px solid var(--border-soft);font-size:12px;vertical-align:middle}.z33a-table tr:last-child td{border-bottom:0}.z33a-muted{font-size:10px;color:var(--text-dim);margin-top:3px}.z33a-pill{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:9px;font-weight:800}.z33a-pill.ok{background:var(--ok-bg);color:var(--ok-fg)}.z33a-pill.warn{background:var(--warn-bg);color:var(--warn-fg)}.z33a-pill.bad{background:var(--bad-bg);color:var(--bad-fg)}.z33a-pill.off{background:var(--panel-alt);color:var(--text-dim)}
+      .z33a-list{display:grid;gap:8px}.z33a-item{background:var(--panel-alt);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;align-items:center;justify-content:space-between;gap:10px}.z33a-empty{padding:34px;text-align:center;color:var(--text-dim);font-size:12px}.z33a-actions-row{display:flex;gap:6px;flex-wrap:wrap}
+      .z33a-menu-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:80;display:none}.z33a-menu-overlay.show{display:block}.z33a-menu-drawer{position:fixed;left:0;top:0;bottom:0;width:305px;background:var(--panel);border-right:1px solid var(--border);z-index:81;box-shadow:18px 0 48px rgba(0,0,0,.5);padding:24px;transform:translateX(-100%);transition:transform .18s}.z33a-menu-drawer.show{transform:translateX(0)}.z33a-menu-title{font-size:20px;font-weight:700}.z33a-menu-sub{font-size:12px;color:var(--text-dim);margin-top:4px}.z33a-menu-list{display:grid;gap:4px;margin-top:22px}.z33a-menu-item{height:45px;border:0;background:transparent;border-radius:9px;text-align:left;padding:0 12px;font-size:13px;font-weight:600;color:var(--text-dim);cursor:pointer}.z33a-menu-item:hover,.z33a-menu-item.active{background:var(--red);color:#fff}
+      .z33a-drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:90;display:none}.z33a-drawer-overlay.show{display:block}.z33a-drawer{position:fixed;top:0;right:0;bottom:0;width:min(500px,95vw);background:var(--panel);border-left:1px solid var(--border);z-index:91;box-shadow:-18px 0 48px rgba(0,0,0,.5);padding:22px;overflow:auto;transform:translateX(100%);transition:transform .18s}.z33a-drawer.show{transform:translateX(0)}.z33a-drawer-head{display:flex;align-items:flex-start;gap:10px}.z33a-drawer-head h3{margin:0;font-size:20px}.z33a-drawer-head .z33a-btn{margin-left:auto}.z33a-form{display:grid;gap:12px;margin-top:18px}.z33a-form label{font-size:10px;font-weight:700;color:var(--text-dim)}.z33a-form input,.z33a-form select,.z33a-form textarea{width:100%;margin-top:6px;padding:11px;border:1px solid var(--border);border-radius:9px;background:var(--panel-alt);color:var(--text);font-size:12px}.z33a-form textarea{min-height:80px;resize:vertical}.z33a-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.z33a-check{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--text)}.z33a-check input{width:auto;margin:0}.z33a-msg{font-size:11px;padding:9px 11px;border-radius:8px}.z33a-msg.err{background:var(--bad-bg);color:var(--bad-fg);border:1px solid #4a2321}.z33a-msg.ok{background:var(--ok-bg);color:var(--ok-fg);border:1px solid #1f6f47}
+      .z33a-calendar{background:var(--panel);border:1px solid var(--border);border-radius:14px;overflow:auto}.z33a-cal-inner{min-width:980px}.z33a-week-head{display:grid;grid-template-columns:54px repeat(7,1fr);background:var(--panel-alt);border-bottom:1px solid var(--border)}.z33a-week-head>div{padding:9px 3px;text-align:center;border-left:1px solid var(--border-soft)}.z33a-week-head small{font-size:8px;color:var(--text-dim);text-transform:uppercase}.z33a-week-head b{display:block;margin-top:3px;font-size:13px}.z33a-week-body{display:grid;grid-template-columns:54px 1fr}.z33a-time-col,.z33a-day-col{height:850px;position:relative}.z33a-time{position:absolute;right:7px;transform:translateY(-6px);font-size:8px;color:var(--text-dim)}.z33a-day-cols{display:grid;grid-template-columns:repeat(7,1fr)}.z33a-day-col{border-left:1px solid var(--border-soft)}.z33a-hour{position:absolute;left:0;right:0;border-top:1px solid var(--border-soft)}.z33a-class{position:absolute;left:4px;right:4px;border:1px solid var(--border);border-left:3px solid var(--text-dim);background:var(--panel);border-radius:7px;padding:5px;cursor:pointer;overflow:hidden}.z33a-class.full{border-left-color:var(--red);background:var(--bad-bg)}.z33a-class.master{border-left-color:var(--warn-fg);background:var(--warn-bg)}.z33a-class strong{display:block;font-size:9px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}.z33a-class small{display:block;color:var(--text-dim);font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .z33a-hero{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}.z33a-hero h2{font-size:32px;margin:4px 0}.z33a-big-actions{display:grid;grid-template-columns:repeat(2,minmax(150px,1fr));gap:10px;min-width:340px}.z33a-action-card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;text-align:left;cursor:pointer;color:var(--text)}.z33a-action-card b{display:block;font-size:13px}.z33a-action-card span{display:block;color:var(--text-dim);font-size:11px;margin-top:5px}
       @media(max-width:760px){.z33a-actions{display:none}.z33a-content{padding:18px 12px 42px}.z33a-stats{grid-template-columns:1fr 1fr}.z33a-grid2,.z33a-grid3{grid-template-columns:1fr}.z33a-row{grid-template-columns:1fr}.z33a-search{min-width:100%;width:100%}.z33a-big-actions{min-width:0;grid-template-columns:1fr}.z33a-menu-drawer{width:86vw}}
     `;
     document.head.appendChild(style);
@@ -423,7 +426,7 @@
       <div class="z33a-sub" style="margin-bottom:12px">Desactivar conserva el historial de clases; eliminar borra al coach de forma permanente (sus clases pasadas se conservan sin coach asignado).</div>
       <div class="z33a-grid3">${state.coaches.map((c) => `
         <div class="z33a-card">
-          <div style="display:flex;align-items:center;gap:12px"><img src="${esc(c.photo_url || './assets/zona33-logo-portal.webp')}" alt="" style="width:56px;height:56px;border-radius:12px;object-fit:cover;background:#f1f1f3"><div><b style="font-size:15px">${esc(c.name || '')}</b><div class="z33a-muted">${esc(c.specialty || 'Coach ZONA 33')} · ${c.is_active === false ? 'Inactivo' : 'Activo'}</div></div></div>
+          <div style="display:flex;align-items:center;gap:12px"><img src="${esc(c.photo_url || './assets/zona33-logo-correct.svg')}" alt="" style="width:56px;height:56px;border-radius:12px;object-fit:cover;background:#212124"><div><b style="font-size:15px">${esc(c.name || '')}</b><div class="z33a-muted">${esc(c.specialty || 'Coach ZONA 33')} · ${c.is_active === false ? 'Inactivo' : 'Activo'}</div></div></div>
           <p class="z33a-muted" style="min-height:32px">${esc(c.bio || '')}</p>
           <div class="z33a-actions-row">
             <button class="z33a-btn" data-edit-coach="${c.id}">Editar</button>
@@ -459,7 +462,7 @@
         <label>Especialidad<input id="co-specialty"></label>
         <label>Foto
           <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
-            <img id="co-photo-preview" src="${esc(photoUrl || './assets/zona33-logo-portal.webp')}" alt="" style="width:72px;height:72px;border-radius:12px;object-fit:cover;background:#f1f1f3;flex:none">
+            <img id="co-photo-preview" src="${esc(photoUrl || './assets/zona33-logo-correct.svg')}" alt="" style="width:72px;height:72px;border-radius:12px;object-fit:cover;background:#212124;flex:none">
             <div style="flex:1;min-width:0">
               <input id="co-photo-file" type="file" accept="image/*">
               <div id="co-photo-msg" class="z33a-muted" style="margin-top:4px"></div>
@@ -875,12 +878,18 @@
     if (hasData) { drawIncomeExpenseChart(perBucket); drawTrendChart(perBucket); }
   }
 
+  // Colores de ejes/leyenda/gridlines para que las gráficas de Finanzas se
+  // sigan viendo bien sobre el nuevo fondo oscuro de .z33a-chart (los
+  // valores por defecto de Chart.js son grises oscuros pensados para fondo
+  // blanco y quedarían casi invisibles aquí). Es solo estética — ningún
+  // cálculo/dato de Finanzas cambia.
   function financeChartOptions() {
+    const textColor = '#a3a3aa', gridColor = 'rgba(255,255,255,.08)';
     return {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+        legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 }, color: textColor } },
         tooltip: {
           callbacks: {
             label: (ctx) => `${ctx.dataset.label}: ${money(ctx.parsed.y)}`,
@@ -892,7 +901,10 @@
           }
         }
       },
-      scales: { y: { beginAtZero: true, ticks: { callback: (v) => money(v) } } }
+      scales: {
+        x: { ticks: { color: textColor }, grid: { color: gridColor } },
+        y: { beginAtZero: true, ticks: { color: textColor, callback: (v) => money(v) }, grid: { color: gridColor } }
+      }
     };
   }
 
@@ -913,8 +925,8 @@
       chartInstance = new window.Chart(canvas.getContext('2d'), {
         type: 'bar',
         data: { labels: buckets.map((b) => b.label), datasets: [
-          { label: 'Ingresos', data: buckets.map((b) => b.income), backgroundColor: '#d3232d', borderRadius: 5, maxBarThickness: 36 },
-          { label: 'Egresos', data: buckets.map((b) => b.expense), backgroundColor: '#22272d', borderRadius: 5, maxBarThickness: 36 }
+          { label: 'Ingresos', data: buckets.map((b) => b.income), backgroundColor: '#e0433a', borderRadius: 5, maxBarThickness: 36 },
+          { label: 'Egresos', data: buckets.map((b) => b.expense), backgroundColor: '#c9cbd1', borderRadius: 5, maxBarThickness: 36 }
         ] },
         options: financeChartOptions()
       });
@@ -929,8 +941,8 @@
       trendChartInstance = new window.Chart(canvas.getContext('2d'), {
         type: 'line',
         data: { labels: buckets.map((b) => b.label), datasets: [
-          { label: 'Ingresos', data: buckets.map((b) => b.income), borderColor: '#d3232d', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 },
-          { label: 'Egresos', data: buckets.map((b) => b.expense), borderColor: '#22272d', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }
+          { label: 'Ingresos', data: buckets.map((b) => b.income), borderColor: '#e0433a', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 },
+          { label: 'Egresos', data: buckets.map((b) => b.expense), borderColor: '#c9cbd1', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3 }
         ] },
         options: financeChartOptions()
       });
@@ -1101,7 +1113,7 @@
   function imagePickerHtml(fileId, previewId, msgId, currentUrl, size) {
     size = size || 72;
     return `<div style="display:flex;align-items:center;gap:12px;margin-top:4px">
-      <img id="${previewId}" src="${esc(currentUrl || './assets/zona33-logo-portal.webp')}" alt="" style="width:${size}px;height:${size}px;border-radius:12px;object-fit:cover;background:#f1f1f3;flex:none">
+      <img id="${previewId}" src="${esc(currentUrl || './assets/zona33-logo-correct.svg')}" alt="" style="width:${size}px;height:${size}px;border-radius:12px;object-fit:cover;background:#212124;flex:none">
       <div style="flex:1;min-width:0">
         <input id="${fileId}" type="file" accept="image/*">
         <div id="${msgId}" class="z33a-muted" style="margin-top:4px"></div>
@@ -1235,7 +1247,7 @@
     const items = (state.site.services || {}).items || [];
     body.innerHTML = `<div class="z33a-toolbar"><span class="z33a-sub">Tarjetas de servicios/beneficios mostradas en el landing.</span><button class="z33a-btn red" id="z33-new-service">+ Servicio</button></div>
       <div class="z33a-grid3" style="margin-top:12px">${items.map((it, i) => `<div class="z33a-card">
-        <img src="${esc(it.image_url || './assets/zona33-logo-portal.webp')}" alt="" style="width:100%;height:110px;object-fit:cover;border-radius:10px;background:#f1f1f3">
+        <img src="${esc(it.image_url || './assets/zona33-logo-correct.svg')}" alt="" style="width:100%;height:110px;object-fit:cover;border-radius:10px;background:#212124">
         <h3 style="margin:10px 0 2px">${esc(it.name || '')}</h3>
         <p class="z33a-muted" style="min-height:32px">${esc(it.description || '')}</p>
         <div class="z33a-muted">${it.is_active === false ? 'Inactivo' : 'Activo'}</div>
@@ -1296,7 +1308,7 @@
     body.innerHTML = `<div class="z33a-card">
       <h3 style="margin-top:0">Coaches</h3>
       <p class="z33a-muted">El landing muestra únicamente los coaches activos, leídos directamente del mismo registro que administra el módulo Coaches (incluida la foto). Edita ahí — no hay una copia separada.</p>
-      <div class="z33a-grid3">${state.coaches.filter((c) => c.is_active !== false).map((c) => `<div class="z33a-card"><img src="${esc(c.photo_url || './assets/zona33-logo-portal.webp')}" alt="" style="width:56px;height:56px;border-radius:12px;object-fit:cover"><h3 style="margin:8px 0 0">${esc(c.name || '')}</h3><div class="z33a-muted">${esc(c.specialty || '')}</div></div>`).join('') || '<div class="z33a-empty">Sin coaches activos.</div>'}</div>
+      <div class="z33a-grid3">${state.coaches.filter((c) => c.is_active !== false).map((c) => `<div class="z33a-card"><img src="${esc(c.photo_url || './assets/zona33-logo-correct.svg')}" alt="" style="width:56px;height:56px;border-radius:12px;object-fit:cover"><h3 style="margin:8px 0 0">${esc(c.name || '')}</h3><div class="z33a-muted">${esc(c.specialty || '')}</div></div>`).join('') || '<div class="z33a-empty">Sin coaches activos.</div>'}</div>
       <div class="z33a-actions-row" style="margin-top:12px"><button class="z33a-btn red" id="z33-goto-coaches">Editar en Coaches</button></div>
     </div>`;
     $('#z33-goto-coaches').onclick = () => route('coaches');
@@ -1422,7 +1434,7 @@
       </div>
       <div class="z33a-card" style="margin-top:16px">
         <div class="z33a-toolbar"><span class="z33a-sub">Personas destacadas de la comunidad</span><button class="z33a-btn red" id="z33-new-person">+ Persona</button></div>
-        <div class="z33a-grid3" style="margin-top:10px">${state.landingPeople.map((p) => `<div class="z33a-card"><img src="${esc(p.photo_url || './assets/zona33-logo-portal.webp')}" alt="" style="width:56px;height:56px;border-radius:12px;object-fit:cover"><h3 style="margin:8px 0 0">${esc(p.name)}</h3><div class="z33a-muted">${esc(p.result || '')} · ${esc(p.category || '')}</div><div class="z33a-actions-row"><button class="z33a-btn" data-person-edit="${p.id}">Editar</button><button class="z33a-btn danger" data-person-del="${p.id}">Eliminar</button></div></div>`).join('') || '<div class="z33a-empty">Sin personas destacadas.</div>'}</div>
+        <div class="z33a-grid3" style="margin-top:10px">${state.landingPeople.map((p) => `<div class="z33a-card"><img src="${esc(p.photo_url || './assets/zona33-logo-correct.svg')}" alt="" style="width:56px;height:56px;border-radius:12px;object-fit:cover"><h3 style="margin:8px 0 0">${esc(p.name)}</h3><div class="z33a-muted">${esc(p.result || '')} · ${esc(p.category || '')}</div><div class="z33a-actions-row"><button class="z33a-btn" data-person-edit="${p.id}">Editar</button><button class="z33a-btn danger" data-person-del="${p.id}">Eliminar</button></div></div>`).join('') || '<div class="z33a-empty">Sin personas destacadas.</div>'}</div>
       </div>`;
     $('#z33-new-post').onclick = () => communityPostForm();
     $$('[data-post-edit]').forEach((b) => b.onclick = () => communityPostForm(b.dataset.postEdit));
@@ -1503,7 +1515,7 @@
   // ---- 10. Instagram manual (tabla real: instagram_posts) ----
   function landingInstagram(body) {
     body.innerHTML = `<div class="z33a-toolbar"><span class="z33a-sub">Publicaciones de Instagram mostradas en el landing.</span><button class="z33a-btn red" id="z33-new-ig">+ Publicación</button></div>
-      <div class="z33a-grid3" style="margin-top:12px">${state.instagram.map((p) => `<div class="z33a-card"><img src="${esc(p.image_url)}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:10px;background:#f1f1f3"><p class="z33a-muted" style="min-height:32px">${esc(p.caption || '')}</p><div class="z33a-muted">${p.is_published ? 'Publicado' : 'Oculto'}</div><div class="z33a-actions-row"><button class="z33a-btn" data-ig-edit="${p.id}">Editar</button><button class="z33a-btn danger" data-ig-del="${p.id}">Eliminar</button></div></div>`).join('') || '<div class="z33a-empty">Sin publicaciones.</div>'}</div>`;
+      <div class="z33a-grid3" style="margin-top:12px">${state.instagram.map((p) => `<div class="z33a-card"><img src="${esc(p.image_url)}" alt="" style="width:100%;height:120px;object-fit:cover;border-radius:10px;background:#212124"><p class="z33a-muted" style="min-height:32px">${esc(p.caption || '')}</p><div class="z33a-muted">${p.is_published ? 'Publicado' : 'Oculto'}</div><div class="z33a-actions-row"><button class="z33a-btn" data-ig-edit="${p.id}">Editar</button><button class="z33a-btn danger" data-ig-del="${p.id}">Eliminar</button></div></div>`).join('') || '<div class="z33a-empty">Sin publicaciones.</div>'}</div>`;
     $('#z33-new-ig').onclick = () => instagramForm();
     $$('[data-ig-edit]').forEach((b) => b.onclick = () => instagramForm(b.dataset.igEdit));
     $$('[data-ig-del]').forEach((b) => b.onclick = async () => {
@@ -1567,7 +1579,7 @@
       <div class="z33a-card">
         <div class="z33a-toolbar"><span class="z33a-sub">Fotos del landing (imagen + frase superpuesta, ej. "Después del WOD")</span><button class="z33a-btn red" id="z33-new-photo">+ Foto</button></div>
         <div class="z33a-grid3" style="margin-top:12px">${photos.map((p, i) => `<div class="z33a-card">
-          <img src="${esc(p.image_url || './assets/zona33-logo-portal.webp')}" alt="" style="width:100%;height:110px;object-fit:cover;border-radius:10px;background:#f1f1f3">
+          <img src="${esc(p.image_url || './assets/zona33-logo-correct.svg')}" alt="" style="width:100%;height:110px;object-fit:cover;border-radius:10px;background:#212124">
           <h3 style="margin:10px 0 2px">${esc(p.caption || '(sin texto)')}</h3>
           <div class="z33a-muted">${p.is_active === false ? 'Inactivo' : 'Activo'}</div>
           <div class="z33a-actions-row">
