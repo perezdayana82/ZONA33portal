@@ -138,7 +138,7 @@
   // Carga de datos — una sola vez por navegación, todo desde Supabase
   // ---------------------------------------------------------------
   async function loadData() {
-    const [clients, coaches, classes, reservations, payments, memberships, plans, founders, expenses, site, masterOptions, wods, leaderboard, announcements, instagram, landingPeople] = await Promise.all([
+    const [clients, coaches, classes, reservations, payments, memberships, plans, founders, expenses, site, masterOptions, wods, leaderboard, announcements, instagram, landingPeople, backupLogs] = await Promise.all([
       db.from('profiles').select('*').eq('role', 'cliente').order('created_at', { ascending: false }),
       db.from('coaches').select('*').order('is_active', { ascending: false }).order('name'),
       db.from('classes').select('*').order('class_date', { ascending: false }).order('start_time'),
@@ -163,7 +163,10 @@
       // sin uso real, dejaría al admin editando contenido que nunca aparece).
       db.from('announcements').select('*').order('published_at', { ascending: false }),
       db.from('instagram_posts').select('*').order('sort_order').order('created_at', { ascending: false }),
-      db.from('landing_people').select('*').order('position').order('created_at', { ascending: false })
+      db.from('landing_people').select('*').order('position').order('created_at', { ascending: false }),
+      // Historial de Respaldos — tabla nueva y aislada, sin relación con el
+      // resto del contenido cargado arriba.
+      db.from('backup_logs').select('*').order('created_at', { ascending: false }).limit(50)
     ]);
     state.clients = clients.data || [];
     state.coaches = coaches.data || [];
@@ -181,6 +184,7 @@
     state.announcements = announcements.data || [];
     state.instagram = instagram.data || [];
     state.landingPeople = landingPeople.data || [];
+    state.backupLogs = backupLogs.data || [];
   }
 
   function stat(icon, tone, value, label) {
@@ -193,7 +197,7 @@
   // ---------------------------------------------------------------
   // Layout raíz + router
   // ---------------------------------------------------------------
-  const NAV_ITEMS = [['dashboard', 'Dashboard'], ['clients', 'Clientes'], ['agenda', 'Clases / Horarios'], ['coaches', 'Coaches'], ['finance', 'Finanzas'], ['landing', 'Editar Landing'], ['account', 'Mi cuenta']];
+  const NAV_ITEMS = [['dashboard', 'Dashboard'], ['clients', 'Clientes'], ['agenda', 'Clases / Horarios'], ['coaches', 'Coaches'], ['finance', 'Finanzas'], ['landing', 'Editar Landing'], ['backups', 'Respaldos'], ['account', 'Mi cuenta']];
   const PAGE_TITLES = Object.fromEntries(NAV_ITEMS);
 
   function renderRoot() {
@@ -218,7 +222,7 @@
     state.page = page;
     setTitle(PAGE_TITLES[page] || 'Dashboard');
     await loadData();
-    ({ dashboard, clients, agenda, coaches, finance, landing, account }[page] || dashboard)();
+    ({ dashboard, clients, agenda, coaches, finance, landing, backups, account }[page] || dashboard)();
     const menu = $('#z33-menu');
     if (menu) { menu.querySelector('.z33a-menu-list').innerHTML = menuItems(); bindMenu(); }
   }
@@ -1746,6 +1750,320 @@
       $('#ac-pass').value = ''; $('#ac-pass2').value = '';
       msg.innerHTML = `<div class="z33a-msg ok">${esc(notes.length ? notes.join(' ') : 'Sin cambios.')}</div>`;
     };
+  }
+
+  // =================================================================
+  // RESPALDOS — exportación Excel de la información operativa. Sección
+  // aislada: no lee ni modifica nada de Portal Cliente/Landing/reservas/
+  // membresías/pagos/calendario/Finanzas — solo LEE los mismos arreglos
+  // que esos módulos ya cargan en `state` vía loadData() y los vuelca a un
+  // .xlsx. No crea ninguna tabla ni bucket paralelo a los ya existentes
+  // más que los dos exclusivos de esta feature (backup_logs y el bucket
+  // privado "backups", ver migración backup_system_infra).
+  // =================================================================
+  const BACKUP_PERIODS = [['mes_actual', 'Mes actual'], ['mes_anterior', 'Mes anterior'], ['todo', 'Todo']];
+
+  function monthRangeFor(offsetMonths) {
+    const t = today();
+    const y = Number(t.slice(0, 4)), m = Number(t.slice(5, 7));
+    const d = new Date(y, m - 1 + offsetMonths, 1);
+    const yy = d.getFullYear(), mm = d.getMonth() + 1;
+    const lastDay = new Date(yy, mm, 0).getDate();
+    const ym = `${yy}-${String(mm).padStart(2, '0')}`;
+    return { from: `${ym}-01`, to: `${ym}-${String(lastDay).padStart(2, '0')}`, label: ym };
+  }
+
+  // Mismo dataset que arma generate-backup (Edge Function) para el respaldo
+  // automático mensual, pero leyendo `state.*` ya en memoria (sin ninguna
+  // consulta nueva) en vez de hacer sus propias consultas a Supabase.
+  function buildBackupDataset(periodType) {
+    let from = '0001-01-01', to = '9999-12-31', label = 'Todo';
+    if (periodType === 'mes_actual') { const r = monthRangeFor(0); from = r.from; to = r.to; label = `Mes actual (${r.label})`; }
+    if (periodType === 'mes_anterior') { const r = monthRangeFor(-1); from = r.from; to = r.to; label = `Mes anterior (${r.label})`; }
+
+    // Membresías activas: misma regla que el Dashboard (última membresía
+    // por cliente, no un conteo crudo de filas con status='active').
+    const latest = latestMembershipByClient();
+    let activeMemberships = 0;
+    for (const c of state.clients) if (membershipStatus(latest.get(c.id)).key === 'active') activeMemberships++;
+
+    const paymentsInRange = state.payments.filter((p) => (p.payment_date || '') >= from && (p.payment_date || '') <= to);
+    const paymentsApproved = paymentsInRange.filter((p) => p.status === 'approved');
+    const income = paymentsApproved.reduce((s, p) => s + Number(p.amount || 0), 0);
+    const expensesInRange = state.expenses.filter((e) => (e.expense_date || '') >= from && (e.expense_date || '') <= to);
+    const expense = expensesInRange.reduce((s, e) => s + Number(e.amount || 0), 0);
+    const classesInRange = state.classes.filter((c) => (c.class_date || '') >= from && (c.class_date || '') <= to);
+    const reservationsInRange = state.reservations.filter((r) => {
+      const cls = state.classes.find((c) => c.id === r.class_id);
+      const d = cls?.class_date || '';
+      return d >= from && d <= to;
+    });
+    const wodsInRange = state.wods.filter((w) => (w.wod_date || '') >= from && (w.wod_date || '') <= to);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      periodType, periodLabel: label,
+      summary: {
+        activeClients: state.clients.filter((c) => c.is_active !== false).length,
+        totalClients: state.clients.length,
+        activeMemberships,
+        income, expense, balance: income - expense,
+        reservationsCount: reservationsInRange.length,
+        classesCount: classesInRange.length,
+      },
+      // Clientes y Membresías: estado actual completo, no se filtran por
+      // periodo (son catálogo/estado, no movimientos con fecha puntual).
+      clients: state.clients,
+      memberships: state.memberships.map((m) => ({
+        ...m,
+        clienteName: m.profiles?.full_name || '',
+        planName: m.membership_plans?.name || '',
+        estado: membershipStatus(m).label,
+      })),
+      payments: paymentsInRange.map((p) => ({
+        ...p,
+        clienteName: p.profiles?.full_name || '',
+        concepto: p.concept || p.membership_plans?.name || 'Membresía',
+        membresiaRef: (() => {
+          const mem = state.memberships.find((m) => m.id === p.membership_id);
+          if (!mem) return '';
+          return `${mem.membership_plans?.name || ''} (vence ${mem.end_date || '?'})`;
+        })(),
+      })),
+      reservations: reservationsInRange.map((r) => {
+        const cls = state.classes.find((c) => c.id === r.class_id);
+        return {
+          ...r,
+          class_date: cls?.class_date || '', start_time: cls?.start_time || '', class_type: cls?.class_type || '',
+          clienteName: r.profiles?.full_name || '',
+          coachName: cls?.coach?.name || state.coaches.find((c) => c.id === r.coach_id)?.name || '',
+        };
+      }),
+      classes: classesInRange.map((c) => ({ ...c, coachName: c.coach?.name || '' })),
+      // Mismos movimientos financieros que ya muestra Admin → Finanzas,
+      // calculados con la función existente (nunca una segunda lógica).
+      finance: financeMovements(from, to),
+      wods: wodsInRange,
+    };
+  }
+
+  // Construye el workbook de 8 hojas (misma forma/orden de columnas que la
+  // Edge Function generate-backup, así un respaldo manual y uno automático
+  // del mismo periodo son idénticos). Usa el ExcelJS vendorizado localmente
+  // (assets/exceljs.min.js) — sin ninguna llamada a un CDN.
+  async function buildBackupWorkbook(dataset) {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'ZONA 33 · Respaldos';
+    wb.created = new Date();
+
+    const headerRow = (ws) => { ws.getRow(1).font = { bold: true }; ws.views = [{ state: 'frozen', ySplit: 1 }]; };
+    const autofit = (ws, widths) => { ws.columns.forEach((c, i) => { c.width = widths[i] || 18; }); };
+
+    const wsResumen = wb.addWorksheet('Resumen');
+    wsResumen.columns = [{ header: 'Campo', key: 'k' }, { header: 'Valor', key: 'v' }];
+    const s = dataset.summary;
+    wsResumen.addRows([
+      { k: 'Fecha del respaldo', v: dataset.generatedAt },
+      { k: 'Periodo respaldado', v: dataset.periodLabel },
+      { k: 'Clientes activos', v: s.activeClients },
+      { k: 'Total de clientes', v: s.totalClients },
+      { k: 'Membresías activas', v: s.activeMemberships },
+      { k: 'Ingresos del periodo', v: s.income },
+      { k: 'Gastos del periodo', v: s.expense },
+      { k: 'Balance del periodo', v: s.balance },
+      { k: 'Número de reservas', v: s.reservationsCount },
+      { k: 'Número de clases', v: s.classesCount },
+    ]);
+    ['Ingresos del periodo', 'Gastos del periodo', 'Balance del periodo'].forEach((label) => {
+      const row = wsResumen.getRows(2, 10)?.find((r) => r.getCell(1).value === label);
+      if (row) row.getCell(2).numFmt = '$#,##0.00';
+    });
+    headerRow(wsResumen); autofit(wsResumen, [28, 24]);
+
+    const wsClientes = wb.addWorksheet('Clientes');
+    wsClientes.columns = [
+      { header: 'Nombre', key: 'nombre' }, { header: 'Correo', key: 'correo' }, { header: 'Teléfono', key: 'telefono' },
+      { header: 'Fecha de nacimiento', key: 'nacimiento' }, { header: 'Fecha de alta', key: 'alta' }, { header: 'Activo/Inactivo', key: 'activo' },
+    ];
+    dataset.clients.forEach((c) => wsClientes.addRow({
+      nombre: c.full_name || '', correo: c.email || '', telefono: c.phone || '',
+      nacimiento: c.birth_date || '', alta: (c.created_at || '').slice(0, 10), activo: c.is_active === false ? 'Inactivo' : 'Activo',
+    }));
+    wsClientes.autoFilter = { from: 'A1', to: 'F1' };
+    headerRow(wsClientes); autofit(wsClientes, [26, 26, 16, 16, 14, 12]);
+
+    const wsMem = wb.addWorksheet('Membresías');
+    wsMem.columns = [
+      { header: 'Cliente', key: 'cliente' }, { header: 'Plan', key: 'plan' }, { header: 'Fecha de inicio', key: 'inicio' },
+      { header: 'Fecha de vencimiento', key: 'fin' }, { header: 'Estado', key: 'estado' }, { header: 'Fecha de creación', key: 'creacion' },
+    ];
+    dataset.memberships.forEach((m) => wsMem.addRow({
+      cliente: m.clienteName || '', plan: m.planName || '', inicio: m.start_date || '', fin: m.end_date || '',
+      estado: m.estado || '', creacion: (m.created_at || '').slice(0, 10),
+    }));
+    wsMem.autoFilter = { from: 'A1', to: 'F1' };
+    headerRow(wsMem); autofit(wsMem, [26, 20, 14, 16, 12, 14]);
+
+    const wsPagos = wb.addWorksheet('Pagos');
+    wsPagos.columns = [
+      { header: 'Fecha', key: 'fecha' }, { header: 'Cliente', key: 'cliente' }, { header: 'Concepto / plan', key: 'concepto' },
+      { header: 'Monto', key: 'monto' }, { header: 'Método de pago', key: 'metodo' }, { header: 'Estado', key: 'estado' },
+      { header: 'Membresía relacionada', key: 'membresia' },
+    ];
+    dataset.payments.forEach((p) => {
+      const row = wsPagos.addRow({
+        fecha: p.payment_date || '', cliente: p.clienteName || '', concepto: p.concepto || '',
+        monto: Number(p.amount || 0), metodo: p.method || '', estado: FIN_STATUS_LABEL[p.status] || p.status || '',
+        membresia: p.membresiaRef || '',
+      });
+      row.getCell('monto').numFmt = '$#,##0.00';
+    });
+    wsPagos.autoFilter = { from: 'A1', to: 'G1' };
+    headerRow(wsPagos); autofit(wsPagos, [14, 26, 22, 14, 16, 14, 26]);
+
+    const wsRes = wb.addWorksheet('Reservas');
+    wsRes.columns = [
+      { header: 'Fecha', key: 'fecha' }, { header: 'Hora', key: 'hora' }, { header: 'Clase', key: 'clase' },
+      { header: 'Cliente', key: 'cliente' }, { header: 'Coach', key: 'coach' }, { header: 'Estado', key: 'estado' },
+    ];
+    dataset.reservations.forEach((r) => wsRes.addRow({
+      fecha: r.class_date || '', hora: r.start_time || '', clase: r.class_type || '',
+      cliente: r.clienteName || '', coach: r.coachName || '', estado: r.status || '',
+    }));
+    wsRes.autoFilter = { from: 'A1', to: 'F1' };
+    headerRow(wsRes); autofit(wsRes, [14, 10, 18, 26, 20, 14]);
+
+    const wsClases = wb.addWorksheet('Clases');
+    wsClases.columns = [
+      { header: 'Día', key: 'dia' }, { header: 'Hora', key: 'hora' }, { header: 'Clase', key: 'clase' },
+      { header: 'Coach', key: 'coach' }, { header: 'Capacidad', key: 'capacidad' }, { header: 'Estado', key: 'estado' },
+    ];
+    dataset.classes.forEach((c) => wsClases.addRow({
+      dia: c.class_date || '', hora: c.start_time || '', clase: c.class_type || '',
+      coach: c.coachName || '', capacidad: c.capacity ?? '', estado: CLASS_STATUS_LABEL[c.status] || c.status || '',
+    }));
+    wsClases.autoFilter = { from: 'A1', to: 'F1' };
+    headerRow(wsClases); autofit(wsClases, [14, 10, 18, 20, 12, 14]);
+
+    const wsFin = wb.addWorksheet('Finanzas');
+    wsFin.columns = [
+      { header: 'Fecha', key: 'fecha' }, { header: 'Tipo', key: 'tipo' }, { header: 'Categoría o concepto', key: 'concepto' },
+      { header: 'Monto', key: 'monto' }, { header: 'Método/origen', key: 'metodo' }, { header: 'Referencia', key: 'referencia' },
+      { header: 'Estado', key: 'estado' },
+    ];
+    dataset.finance.forEach((m) => {
+      const row = wsFin.addRow({
+        fecha: m.date || '', tipo: m.type || '', concepto: m.concept || '', monto: Number(m.amount || 0),
+        metodo: m.method || '', referencia: m.ref || '', estado: FIN_STATUS_LABEL[m.status] || m.status || '',
+      });
+      row.getCell('monto').numFmt = '$#,##0.00';
+    });
+    wsFin.autoFilter = { from: 'A1', to: 'G1' };
+    headerRow(wsFin); autofit(wsFin, [14, 12, 24, 14, 16, 22, 14]);
+
+    // "Fecha de publicación" usa created_at, el único campo real de fecha
+    // además de wod_date — no existe published_at en la tabla, así que no
+    // se inventa uno.
+    const wsWod = wb.addWorksheet('WOD');
+    wsWod.columns = [
+      { header: 'Fecha', key: 'fecha' }, { header: 'WOD', key: 'wod' }, { header: 'Estado', key: 'estado' },
+      { header: 'Fecha de publicación', key: 'publicacion' },
+    ];
+    dataset.wods.forEach((w) => wsWod.addRow({
+      fecha: w.wod_date || '', wod: w.name || '', estado: w.is_published ? 'Publicado' : 'Borrador',
+      publicacion: (w.created_at || '').slice(0, 10),
+    }));
+    wsWod.autoFilter = { from: 'A1', to: 'D1' };
+    headerRow(wsWod); autofit(wsWod, [14, 30, 14, 18]);
+
+    return wb;
+  }
+
+  function backups() {
+    const periodType = state.backupPeriod || 'mes_actual';
+    $('#z33-content').innerHTML = `${pageShell('Respaldos', 'Descarga la información operativa de ZONA 33 en un Excel.')}
+      <div class="z33a-card" style="max-width:640px">
+        <div class="z33a-toolbar">
+          <select id="bk-period" class="z33a-filter">${BACKUP_PERIODS.map(([k, l]) => `<option value="${k}" ${periodType === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          <button class="z33a-btn red" id="bk-download">Descargar respaldo</button>
+        </div>
+        <div id="bk-msg" class="z33a-muted" style="margin-top:6px"></div>
+      </div>
+      <div class="z33a-card" style="max-width:900px;margin-top:16px">
+        <h3 style="margin-top:0">Historial de respaldos</h3>
+        <div class="z33a-table"><table>
+          <thead><tr><th>Fecha</th><th>Periodo</th><th>Tipo</th><th>Archivo</th><th></th></tr></thead>
+          <tbody>${(state.backupLogs || []).map((b) => `<tr>
+            <td>${esc(new Date(b.created_at).toLocaleString('es-MX'))}</td>
+            <td>${esc(b.period_label)}</td>
+            <td>${b.source === 'automatico' ? 'Automático' : 'Manual'}</td>
+            <td>${esc(b.file_name)}${b.status === 'error' ? ' <span class="z33a-pill bad">Error</span>' : ''}</td>
+            <td>${b.status === 'ok' ? `<button class="z33a-btn" data-backup-dl="${b.id}">Descargar</button>` : ''}</td>
+          </tr>`).join('') || '<tr><td colspan="5" class="z33a-empty">Sin respaldos todavía.</td></tr>'}</tbody>
+        </table></div>
+      </div>`;
+    $('#bk-period').onchange = (e) => { state.backupPeriod = e.target.value; };
+    $('#bk-download').onclick = async () => {
+      const btn = $('#bk-download'), sel = $('#bk-period'), msg = $('#bk-msg');
+      const period = sel.value;
+      // Evita que un doble clic mientras se genera dispare dos respaldos
+      // (dos subidas al bucket + dos filas en el historial para la misma
+      // descarga).
+      btn.disabled = true; sel.disabled = true;
+      msg.textContent = 'Generando respaldo…';
+      let downloaded = false;
+      try {
+        const dataset = buildBackupDataset(period);
+        const wb = await buildBackupWorkbook(dataset);
+        const buffer = await wb.xlsx.writeBuffer();
+        // Nombre del archivo según el periodo exportado (no siempre el mes
+        // en curso): ZONA33_Respaldo_YYYY-MM.xlsx para un mes puntual,
+        // ZONA33_Respaldo_Todo_YYYY-MM-DD.xlsx para el historial completo.
+        const fileName = period === 'todo'
+          ? `ZONA33_Respaldo_Todo_${today()}.xlsx`
+          : `ZONA33_Respaldo_${monthRangeFor(period === 'mes_anterior' ? -1 : 0).label}.xlsx`;
+
+        // 1) Descarga inmediata en el navegador del admin — esto ya es la
+        // entrega principal; si el paso 2 (historial) falla después, el
+        // archivo que el admin ya tiene en su equipo sigue siendo válido.
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        downloaded = true;
+
+        // 2) Copia en el bucket privado + registro en el historial, mismo
+        // patrón que un respaldo automático (bucket "backups", tabla
+        // backup_logs) para que quede disponible después desde cualquier
+        // sesión de Admin, no solo en el navegador que lo generó.
+        const filePath = `manual/${Date.now()}-${fileName}`;
+        const up = await db.storage.from('backups').upload(filePath, blob, {
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        });
+        if (up.error) throw new Error(up.error.message);
+        await db.from('backup_logs').insert({
+          period_type: period, period_label: dataset.periodLabel, source: 'manual',
+          file_name: fileName, file_path: filePath, status: 'ok', file_size_bytes: buffer.byteLength, created_by: state.user.id,
+        });
+        msg.innerHTML = '<div class="z33a-msg ok">Respaldo descargado y guardado en el historial.</div>';
+        await route('backups');
+      } catch (err) {
+        // Si ya se alcanzó a descargar el archivo, el error es solo del
+        // paso 2 (copia/historial) — decirlo así evita que el admin piense
+        // que se quedó sin su respaldo cuando en realidad ya lo tiene.
+        const prefix = downloaded ? 'El archivo sí se descargó, pero no se pudo guardar en el historial: ' : '';
+        msg.innerHTML = `<div class="z33a-msg err">${esc(prefix + (err.message || String(err)))}</div>`;
+        btn.disabled = false; sel.disabled = false;
+      }
+    };
+    $$('[data-backup-dl]').forEach((b) => b.onclick = async () => {
+      const log = (state.backupLogs || []).find((x) => x.id === b.dataset.backupDl);
+      if (!log) return;
+      const r = await db.storage.from('backups').createSignedUrl(log.file_path, 60);
+      if (r.error) { alert(r.error.message); return; }
+      window.open(r.data.signedUrl, '_blank', 'noopener');
+    });
   }
 
   // =================================================================
